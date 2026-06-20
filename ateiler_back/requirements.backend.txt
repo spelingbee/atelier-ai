@@ -1,0 +1,10 @@
+# AtelierAI backend (NEW). Добавь к своим зависимостям движка.
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9   # для UploadFile/Form
+pydantic>=2.6
+httpx>=0.27              # вызов LLM (ai_classifier)
+reportlab>=4.0          # PDF в мм (export.py)
+# ОПЦИОНАЛЬНО (production):
+# boto3>=1.34            # S3/MinIO storage
+# asyncpg>=0.29          # если переходишь с sqlite на Postgres

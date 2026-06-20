@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+.venv/
+venv/
+ENV/
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Credentials & Sensitive keys
+.env
+.env.*
+secrets.json
+
+# IDE settings
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local test outputs (SVG, PDF)
+ateiler_back/out_*.svg
+ateiler_back/out_*.pdf
+ateiler_back/comp_assembly.svg
+ateiler_back/comp_assembly.pdf
+ateiler_back/*.db-journal
+ateiler_back/storage/

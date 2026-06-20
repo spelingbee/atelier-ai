@@ -1167,6 +1167,11 @@ const $ = s => document.querySelector(s);
 const api = () => $('#apiBase').value.replace(/\/$/, '');
 let sessionId = null, lastFile = null, lastJob = null;
 
+// Автоматическое определение URL бэкенда в продакшене
+if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' && window.location.protocol !== 'file:') {
+  $('#apiBase').value = window.location.origin;
+}
+
 const names = {
   straight: 'Прямая',
   pencil: 'Карандаш',

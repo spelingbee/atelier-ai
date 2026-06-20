@@ -94,7 +94,7 @@ cd atelier-ai
    ```nginx
    server {
        listen 80;
-       server_name YOUR_SERVER_IP_OR_DOMAIN; # Укажите ваш IP или домен
+       server_name atelier.kataloga.org;
 
        # Фронтенд (раздача статики)
        location / {
@@ -153,6 +153,6 @@ sudo systemctl restart atelier-backend
 Для получения бесплатного SSL-сертификата установите Certbot:
 ```bash
 sudo apt install certbot python3-certbot-nginx -y
-sudo certbot --nginx -d YOUR_DOMAIN.com
+sudo certbot --nginx -d atelier.kataloga.org
 ```
 Certbot сам автоматически изменит конфигурацию Nginx под HTTPS и настроит автопродление сертификата.

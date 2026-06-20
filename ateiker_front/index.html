@@ -1207,7 +1207,8 @@ async function loadSkirtTypes() {
   }
 }
 
-window.addEventListener('DOMContentLoaded', loadSkirtTypes);
+// Загружаем типы юбок сразу при инициализации скрипта
+loadSkirtTypes();
 $('#apiBase').addEventListener('change', loadSkirtTypes);
 
 

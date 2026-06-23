@@ -1165,6 +1165,12 @@ section:first-child {
 <script>
 const $ = s => document.querySelector(s);
 const api = () => $('#apiBase').value.replace(/\/$/, '');
+const resolveUrl = (url) => {
+  if (url && url.startsWith('http://localhost:8000')) {
+    return url.replace('http://localhost:8000', api());
+  }
+  return url;
+};
 let sessionId = null, lastFile = null, lastJob = null;
 
 // Автоматическое определение URL бэкенда в продакшене
@@ -1342,12 +1348,14 @@ $('#btnGenerate').addEventListener('click', async () => {
     const notesList = d.sewing_notes.map(n => `<li>${n}</li>`).join('');
     $('#pieces').innerHTML = `<strong>Детали:</strong> ${piecesList}<br><strong style="display:block; margin-top:10px;">Инструкция по пошиву:</strong><ul style="margin: 5px 0 0 15px; padding-left: 0; text-align: left; list-style-type: decimal;">${notesList}</ul>`;
     // встраиваем SVG в превью
-    const svg = await (await fetch(d.svg_url)).text();
+    const svgUrl = resolveUrl(d.svg_url);
+    const pdfUrl = resolveUrl(d.pdf_url);
+    const svg = await (await fetch(svgUrl)).text();
     $('#preview').innerHTML = svg;
     // кнопки скачивания
     const pdf = $('#dlPdf'), s = $('#dlSvg');
-    pdf.href = d.pdf_url; pdf.download = 'skirt_'+d.skirt_type+'.pdf';
-    s.href = d.svg_url;  s.download = 'skirt_'+d.skirt_type+'.svg';
+    pdf.href = pdfUrl; pdf.download = 'skirt_'+d.skirt_type+'.pdf';
+    s.href = svgUrl;  s.download = 'skirt_'+d.skirt_type+'.svg';
     for (const a of [pdf, s]) { a.style.pointerEvents = 'auto'; a.style.opacity = '1'; }
     setStep(3);
   } catch (e) { toast('Ошибка генерации: ' + e.message); }

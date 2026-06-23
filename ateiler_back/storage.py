@@ -15,9 +15,11 @@ class LocalStorage:
     """Хранит файлы локально и отдаёт file:// или /static URL. Без зависимостей."""
 
     def __init__(self, root: str = "/data/skirt/storage",
-                 base_url: str = "http://localhost:8000/files"):
+                 base_url: str | None = None):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
+        if base_url is None:
+            base_url = os.getenv("STORAGE_BASE_URL", "http://localhost:8000/files")
         self.base_url = base_url.rstrip("/")
 
     def put_file(self, key: str, src_path: str) -> str:

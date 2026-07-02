@@ -28,7 +28,7 @@ from typing import Dict, List, Optional
 ALLOWED_TYPES: List[str] = [
     "straight", "pencil", "a_line", "half_circle", "full_circle",
     "pleated", "tiered", "yoke",
-    "tulip", "mermaid", "hi_low", "bubble", "skort",
+    "tulip", "mermaid", "hi_low", "bubble", "skort", "culottes", "gored_6",
 ]
 LENGTH_HINT_CM = {"mini": 40, "knee": 55, "midi": 70, "maxi": 95}
 _MEDIA = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",

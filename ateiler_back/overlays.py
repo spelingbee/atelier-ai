@@ -20,6 +20,7 @@ import patterns as P
 from patterns import Measurements, PatternPiece
 import components as C
 import export
+from geometry_modifiers import cut_yoke
 
 
 # --------------------------------------------------------------------------- #
@@ -105,41 +106,31 @@ def _peplum(m: Measurements) -> OverlayResult:
 #  Кокетка-оверлей (yoke_overlay): облегающая панель талия→бёдра
 #  (именно такая кокетка на чёрной юбке с фото)
 # --------------------------------------------------------------------------- #
-def _yoke_panel(half_waist_q, half_hip_q, ratio, max_dart, depth, name, label):
-    supp = max(0.0, half_hip_q - half_waist_q)
-    dart_w = min(supp * ratio, max_dart)
-    side_take = max(0.0, supp - dart_w)
-    waist_side_x = half_hip_q - side_take
-    dc = waist_side_x * 0.5
-    dart_len = depth * 0.8
-    pts = [
-        (0.0, 0.0),
-        (dc - dart_w / 2.0, 0.0),
-        (dc, dart_len),
-        (dc + dart_w / 2.0, 0.0),
-        (waist_side_x, 0.0),
-        (half_hip_q, depth),
-        (0.0, depth),
-    ]
-    piece = PatternPiece(
-        name=name, points=_close(pts),
-        grain_line=((1.0, 1.0), (1.0, round(depth - 1.0, 2))),
-        labels=_label(label, half_hip_q * 0.5, depth * 0.5),
-        notches=[(round(waist_side_x, 2), 0.0), (round(half_hip_q, 2), round(depth, 2))],
-        cut_on_fold=True, quantity=1)
-    return piece, waist_side_x, dart_w
-
-
 def _yoke(m: Measurements) -> OverlayResult:
-    W, H = m.W, m.H
     depth = m.hip_depth
     waist_eff = m.waist_cm + m.ease_waist
-    front, _, _ = _yoke_panel(W / 2 + 0.5, H / 2 + 0.5, 0.60, 3.0, depth,
-                              "yoke_overlay_front", "КОКЕТКА ПЕРЕД × 1 (сгиб)")
-    back, _, _ = _yoke_panel(W / 2 - 0.5, H / 2 - 0.5, 0.65, 3.5, depth,
-                             "yoke_overlay_back", "КОКЕТКА СПИНКА × 1 (сгиб)")
+    
+    # Generate yoke pieces dynamically from base panels using cut_yoke
+    base_front = P.StraightSkirtPattern(m).front_panel()
+    base_back = P.StraightSkirtPattern(m).back_panel()
+    
+    front = cut_yoke(base_front, depth)[0]
+    back = cut_yoke(base_back, depth)[0]
+    
+    front.name = "yoke_overlay_front"
+    back.name = "yoke_overlay_back"
+    
+    front.labels = [{"text": "КОКЕТКА ПЕРЕД × 1 (сгиб)", "x": m.H * 0.25, "y": depth * 0.5, "size": 1.0, "bold": True}]
+    back.labels = [{"text": "КОКЕТКА СПИНКА × 1 (сгиб)", "x": m.H * 0.25, "y": depth * 0.5, "size": 1.0, "bold": True}]
+    
+    front.grain_line = ((m.H * 0.25, 2), (m.H * 0.25, depth - 2))
+    back.grain_line = ((m.H * 0.25, 2), (m.H * 0.25, depth - 2))
+    front.cut_on_fold = True
+    back.cut_on_fold = True
+    front.quantity = 1
+    back.quantity = 1
+    
     steps = [
-        "Стачать вытачки кокетки на переде и спинке.",
         "Стачать боковые швы кокетки.",
         "Наложить кокетку на базу по талиевому срезу, скрепить.",
         "Притачать пояс, фиксируя кокетку и базу одним швом.",

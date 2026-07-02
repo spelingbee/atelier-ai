@@ -20,6 +20,7 @@ from patterns import Measurements, build_pattern
 import skirt_types_extra   # noqa: регистрация pleated/tiered/yoke
 import skirt_types_more     # noqa: регистрация tulip/mermaid/hi_low/bubble/skort
 import export
+import seam_shapely  # noqa: F401  (автопатч припуск на швы)
 
 M = Measurements(waist_cm=72, hip_cm=98, length_cm=70)
 WAIST_EFF = M.waist_cm + M.ease_waist
@@ -29,7 +30,7 @@ TOL = 2.0
 
 TYPES = ["straight", "pencil", "a_line", "half_circle", "full_circle",
          "pleated", "tiered", "yoke",
-         "tulip", "mermaid", "hi_low", "hi_low_gathered", "bubble", "skort"]
+         "tulip", "mermaid", "hi_low", "hi_low_gathered", "bubble", "skort", "culottes", "gored_6"]
 
 RADIAL = {"half_circle", "full_circle", "hi_low", "hi_low_gathered"}
 GATHERED = {"pleated", "tiered", "bubble"}
@@ -154,8 +155,8 @@ def verify_type(t, R: Report):
     else:
         circ = 0.0
         for p in body:
-            if p.name in ("front_panel", "back_panel", "front_yoke", "back_yoke"):
-                fold = 2 if getattr(p, "cut_on_fold", False) else 1
+            if p.name in ("front_panel", "back_panel", "front_yoke", "back_yoke", "gored_panel"):
+                fold = p.quantity * (2 if getattr(p, "cut_on_fold", False) else 1)
                 yb = max(y for _, y in p.points)
                 wy = _width_at(p.points, min(M.hip_depth, yb)) or _bbox(p.points)[0]
                 circ += wy * fold

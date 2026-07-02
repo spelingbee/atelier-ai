@@ -12,9 +12,28 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from enum import Enum, auto
 from typing import List, Tuple, Dict, Type
 
 Point = Tuple[float, float]
+
+
+class EdgeRole(Enum):
+    WAIST = auto()
+    HEM = auto()
+    SIDE_LEFT = auto()
+    SIDE_RIGHT = auto()
+    CENTER_FOLD = auto()
+    CENTER_SEAM = auto()
+    DART_LEG = auto()
+    INTERNAL = auto()
+
+
+@dataclass
+class Edge:
+    role: EdgeRole
+    points: List[Point]
+    curve_type: str = "line"
 
 
 # --------------------------------------------------------------------------- #
@@ -54,12 +73,46 @@ class Measurements:
 @dataclass
 class PatternPiece:
     name: str
-    points: List[Point]                       # closed outline, cm
+    edges: List[Edge] = field(default_factory=list)
     grain_line: Tuple[Point, Point] = ((0, 0), (0, 0))
     labels: List[dict] = field(default_factory=list)
     notches: List[Point] = field(default_factory=list)
     cut_on_fold: bool = False                 # левый край — сгиб
     quantity: int = 1
+
+    def __init__(self, name: str, points: List[Point] = None, edges: List[Edge] = None,
+                 grain_line: Tuple[Point, Point] = ((0, 0), (0, 0)),
+                 labels: List[dict] = None, notches: List[Point] = None,
+                 cut_on_fold: bool = False, quantity: int = 1):
+        self.name = name
+        self.grain_line = grain_line
+        self.labels = labels if labels is not None else []
+        self.notches = notches if notches is not None else []
+        self.cut_on_fold = cut_on_fold
+        self.quantity = quantity
+        
+        if edges is not None:
+            self.edges = edges
+        elif points is not None:
+            self.edges = [Edge(role=EdgeRole.INTERNAL, points=points)]
+        else:
+            self.edges = []
+
+    @property
+    def points(self) -> List[Point]:
+        if not self.edges:
+            return []
+        pts = []
+        for edge in self.edges:
+            pts.extend(edge.points[1:] if pts else edge.points)
+        # Close contour if not already closed
+        if pts and pts[0] != pts[-1]:
+            pts.append(pts[0])
+        return pts
+
+    @points.setter
+    def points(self, new_points: List[Point]):
+        self.edges = [Edge(role=EdgeRole.INTERNAL, points=new_points)]
 
 
 # --------------------------------------------------------------------------- #
@@ -110,26 +163,30 @@ class StraightSkirtPattern:
         waist_side_x = hip_q - side_take        # x of side point at the waist
         hem_x = hip_q - self.hem_taper          # pencil tapers hem inwards
 
-        # outline, counter-clockwise starting at fold/top
-        pts: List[Point] = [
-            (0.0, 0.0),                  # CF/CB top (fold)
-            (0.0, L),                    # CF/CB bottom
-            (hem_x, L),                  # hem at side
-            (hip_q, hd),                 # hip line at side seam
-            (waist_side_x, 0.0),         # waist at side seam
+        # Define edges, counter-clockwise starting at fold/top
+        edges = [
+            Edge(role=EdgeRole.CENTER_FOLD, points=[(0.0, 0.0), (0.0, L)]),
+            Edge(role=EdgeRole.HEM, points=[(0.0, L), (hem_x, L)]),
+            Edge(role=EdgeRole.SIDE_RIGHT, points=[(hem_x, L), (hip_q, hd), (waist_side_x, 0.0)]),
         ]
+        
         # waist dart, centred between fold and side
         dc = waist_side_x * 0.5
-        pts += [
-            (dc + dart_w / 2, 0.0),
-            (dc, dart_len),
-            (dc - dart_w / 2, 0.0),
-        ]
-        pts.append((0.0, 0.0))           # close
+        if dart_w > 0:
+            edges.extend([
+                Edge(role=EdgeRole.WAIST, points=[(waist_side_x, 0.0), (dc + dart_w / 2, 0.0)]),
+                Edge(role=EdgeRole.DART_LEG, points=[(dc + dart_w / 2, 0.0), (dc, dart_len)]),
+                Edge(role=EdgeRole.DART_LEG, points=[(dc, dart_len), (dc - dart_w / 2, 0.0)]),
+                Edge(role=EdgeRole.WAIST, points=[(dc - dart_w / 2, 0.0), (0.0, 0.0)]),
+            ])
+        else:
+            edges.append(
+                Edge(role=EdgeRole.WAIST, points=[(waist_side_x, 0.0), (0.0, 0.0)])
+            )
 
         return PatternPiece(
             name=name,
-            points=pts,
+            edges=edges,
             grain_line=((hip_q * 0.45, 5), (hip_q * 0.45, L - 5)),
             labels=[
                 {"text": label, "x": hip_q * 0.45, "y": L * 0.5, "size": 1.4, "bold": True},
@@ -153,9 +210,14 @@ class StraightSkirtPattern:
         m = self.m
         total = m.waist_cm + m.ease_waist + 3.0   # +3 см на застёжку
         h = 4.0
-        pts = [(0, 0), (total, 0), (total, h), (0, h), (0, 0)]
+        edges = [
+            Edge(role=EdgeRole.INTERNAL, points=[(0.0, 0.0), (total, 0.0)]),
+            Edge(role=EdgeRole.SIDE_RIGHT, points=[(total, 0.0), (total, h)]),
+            Edge(role=EdgeRole.WAIST, points=[(total, h), (0.0, h)]),
+            Edge(role=EdgeRole.SIDE_LEFT, points=[(0.0, h), (0.0, 0.0)]),
+        ]
         return PatternPiece(
-            name="waistband", points=pts,
+            name="waistband", edges=edges,
             grain_line=((total * 0.25, h / 2), (total * 0.75, h / 2)),
             labels=[{"text": "ПОЯС × 2", "x": total / 2, "y": h / 2, "size": 1.0, "bold": True}],
             notches=[(total / 2, 0)], quantity=2,
@@ -278,6 +340,176 @@ class FullCircleSkirtPattern(CircleSkirtPattern):
     title = "СОЛНЦЕ"
 
 
+class CulottesPattern:
+    """Юбка-брюки (Culottes)."""
+    title = "ЮБКА-БРЮКИ"
+
+    def __init__(self, m: Measurements):
+        self.m = m
+
+    def _panel(self, hip_q: float, waist_q: float, dart_ratio: float,
+               max_dart: float, name: str, label: str, is_front: bool) -> PatternPiece:
+        m = self.m
+        hd = m.hip_depth
+        L = m.length_cm
+
+        # Crotch depth and extension width
+        crotch_depth = min(0.25 * m.hip_cm + 1.5, L - 10.0)
+        if is_front:
+            crotch_ext = 0.04 * m.hip_cm
+        else:
+            crotch_ext = 0.08 * m.hip_cm
+
+        # Suppression calculations
+        suppression = hip_q - waist_q
+        dart_w = min(suppression * dart_ratio, max_dart)
+        side_take = suppression - dart_w
+        dart_len = 10.0 if not is_front else 9.0
+        waist_side_x = hip_q - side_take
+
+        # Smooth Bezier curve for the crotch
+        curve_pts = []
+        steps = 8
+        p0 = (crotch_ext, crotch_depth - 8.0)
+        p1 = (crotch_ext, crotch_depth)
+        p2 = (0.0, crotch_depth)
+        for i in range(steps + 1):
+            t = i / steps
+            x = (1 - t)**2 * p0[0] + 2 * (1 - t) * t * p1[0] + t**2 * p2[0]
+            y = (1 - t)**2 * p0[1] + 2 * (1 - t) * t * p1[1] + t**2 * p2[1]
+            curve_pts.append((x, y))
+
+        seam_points = [(crotch_ext, 0.0), (crotch_ext, crotch_depth - 8.0)]
+        seam_points.extend(curve_pts[1:])
+
+        leg_points = [(0.0, crotch_depth), (0.0, L)]
+        hem_points = [(0.0, L), (crotch_ext + hip_q, L)]
+        side_points = [(crotch_ext + hip_q, L), (crotch_ext + hip_q, hd), (crotch_ext + waist_side_x, 0.0)]
+
+        edges = [
+            Edge(role=EdgeRole.CENTER_SEAM, points=seam_points),
+            Edge(role=EdgeRole.INTERNAL, points=leg_points),
+            Edge(role=EdgeRole.HEM, points=hem_points),
+            Edge(role=EdgeRole.SIDE_RIGHT, points=side_points),
+        ]
+
+        # Waist dart
+        dc = crotch_ext + waist_side_x * 0.5
+        if dart_w > 0:
+            edges.extend([
+                Edge(role=EdgeRole.WAIST, points=[(crotch_ext + waist_side_x, 0.0), (dc + dart_w / 2, 0.0)]),
+                Edge(role=EdgeRole.DART_LEG, points=[(dc + dart_w / 2, 0.0), (dc, dart_len)]),
+                Edge(role=EdgeRole.DART_LEG, points=[(dc, dart_len), (dc - dart_w / 2, 0.0)]),
+                Edge(role=EdgeRole.WAIST, points=[(dc - dart_w / 2, 0.0), (crotch_ext, 0.0)]),
+            ])
+        else:
+            edges.append(
+                Edge(role=EdgeRole.WAIST, points=[(crotch_ext + waist_side_x, 0.0), (crotch_ext, 0.0)])
+            )
+
+        cx = crotch_ext + hip_q * 0.45
+        return PatternPiece(
+            name=name,
+            edges=edges,
+            grain_line=((cx, 5), (cx, L - 5)),
+            labels=[
+                {"text": label, "x": cx, "y": L * 0.5, "size": 1.4, "bold": True},
+                {"text": f"Т{m.waist_cm:g} Б{m.hip_cm:g} Д{m.length_cm:g}",
+                 "x": cx, "y": L * 0.5 + 2, "size": 0.7},
+            ],
+            notches=[(crotch_ext + hip_q, hd)],
+            cut_on_fold=False,
+            quantity=2,
+        )
+
+    def front_panel(self) -> PatternPiece:
+        return self._panel(self.m.H / 2 + 0.5, self.m.W / 2 + 0.5,
+                           0.60, 3.0, "front_panel", f"ПЕРЕД — {self.title}", is_front=True)
+
+    def back_panel(self) -> PatternPiece:
+        return self._panel(self.m.H / 2 - 0.5, self.m.W / 2 - 0.5,
+                           0.65, 3.5, "back_panel", f"СПИНКА — {self.title}", is_front=False)
+
+    def waistband(self) -> PatternPiece:
+        return StraightSkirtPattern(self.m).waistband()
+
+    def generate(self) -> List[PatternPiece]:
+        return [self.front_panel(), self.back_panel(), self.waistband()]
+
+
+class Gored6SkirtPattern:
+    """Юбка-шестиклинка (6-Gored Skirt). 6 одинаковых симметричных клиньев."""
+    title = "ШЕСТИКЛИНКА"
+
+    def __init__(self, m: Measurements):
+        self.m = m
+
+    def gored_panel(self) -> PatternPiece:
+        m = self.m
+        hd = m.hip_depth
+        L = m.length_cm
+
+        # Width of one wedge (6 total)
+        waist_w = (m.waist_cm + m.ease_waist) / 6.0
+        hip_w = (m.hip_cm + m.ease_hip) / 6.0
+        hem_w = hip_w * 1.5
+
+        # Horizontal offset to keep all coordinates non-negative
+        dx = (hem_w - hip_w) / 2.0
+
+        # Unshifted/unraised key points on left side
+        W_L = (dx + (hip_w - waist_w) / 2.0, 0.0)
+        H_L = (dx, hd)
+        P_hem_un = (0.0, L)
+
+        # Side seam length alignment to prevent drooping
+        d_up = math.dist(W_L, H_L)
+        d_down = L - d_up
+        d_lower_un = math.dist(H_L, P_hem_un)
+        
+        # Calculate ratio to raise left hem point
+        r = d_down / d_lower_un if d_lower_un > 0 else 1.0
+        Hem_L = (H_L[0] + r * (P_hem_un[0] - H_L[0]), H_L[1] + r * (P_hem_un[1] - H_L[1]))
+
+        # Center line of wedge symmetry
+        cx = hem_w / 2.0
+
+        # Symmetric points on right side
+        Hem_R = (2 * cx - Hem_L[0], Hem_L[1])
+        H_R = (2 * cx - H_L[0], H_L[1])
+        W_R = (2 * cx - W_L[0], W_L[1])
+
+        # Define edges in CCW order
+        side_l = Edge(role=EdgeRole.SIDE_LEFT, points=[W_L, H_L, Hem_L])
+        hem_pts = [Hem_L, (cx, L), Hem_R]
+        hem = Edge(role=EdgeRole.HEM, points=hem_pts)
+        side_r = Edge(role=EdgeRole.SIDE_RIGHT, points=[Hem_R, H_R, W_R])
+        waist_pts = [W_R, (cx, 0.5), W_L]
+        waist = Edge(role=EdgeRole.WAIST, points=waist_pts)
+
+        edges = [side_l, hem, side_r, waist]
+
+        return PatternPiece(
+            name="gored_panel",
+            edges=edges,
+            grain_line=((cx, 5), (cx, L - 5)),
+            labels=[
+                {"text": f"КЛИН × 6", "x": cx, "y": L * 0.4, "size": 1.4, "bold": True},
+                {"text": f"Т{m.waist_cm:g} Б{m.hip_cm:g} Д{m.length_cm:g}",
+                 "x": cx, "y": L * 0.4 + 2.5, "size": 0.7},
+            ],
+            notches=[(dx, hd), (2 * cx - dx, hd)],
+            cut_on_fold=False,
+            quantity=6,
+        )
+
+    def waistband(self) -> PatternPiece:
+        return StraightSkirtPattern(self.m).waistband()
+
+    def generate(self) -> List[PatternPiece]:
+        return [self.gored_panel(), self.waistband()]
+
+
 # --------------------------------------------------------------------------- #
 #  Registry
 # --------------------------------------------------------------------------- #
@@ -287,6 +519,8 @@ PATTERN_REGISTRY: Dict[str, Type] = {
     "a_line": ALineSkirtPattern,
     "half_circle": HalfCircleSkirtPattern,
     "full_circle": FullCircleSkirtPattern,
+    "culottes": CulottesPattern,
+    "gored_6": Gored6SkirtPattern,
 }
 
 

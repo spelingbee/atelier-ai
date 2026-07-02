@@ -22,6 +22,7 @@ Point = Tuple[float, float]
 try:
     from shapely.geometry import Polygon
     from shapely.geometry import JOIN_STYLE
+    from shapely.geometry.polygon import orient
     _HAS_SHAPELY = True
 except Exception:
     _HAS_SHAPELY = False
@@ -83,6 +84,7 @@ def seam_outline(points: List[Point], margin_cm: float, mitre_limit: float = 3.0
         geom = off
         if geom.geom_type == "MultiPolygon":     # на всякий случай — берём самый большой
             geom = max(geom.geoms, key=lambda g: g.area)
+        geom = orient(geom, sign=1.0)
         return [(float(x), float(y)) for x, y in geom.exterior.coords]
     except Exception:
         return _fallback(points, margin_cm, mitre_limit)

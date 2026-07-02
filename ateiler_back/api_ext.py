@@ -45,7 +45,7 @@ async def _save_tmp(file: UploadFile) -> str:
 def skirt_types():
     return {"types": sorted(PATTERN_REGISTRY.keys()),
             "new": ["pleated", "tiered", "yoke",
-                    "tulip", "mermaid", "hi_low", "bubble", "skort"]}
+                    "tulip", "mermaid", "hi_low", "bubble", "skort", "culottes", "gored_6"]}
 
 
 @router.post("/api/v2/analyze")

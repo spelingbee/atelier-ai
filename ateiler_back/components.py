@@ -78,7 +78,7 @@ def _flat_top_width(piece: PatternPiece, tol: float = 0.6) -> float:
 
 
 # Классификация силуэтов по поведению ТАЛИЕВОГО среза
-_WAIST_FITTED_DARTS = {"straight", "pencil", "a_line", "tulip", "mermaid"}
+_WAIST_FITTED_DARTS = {"straight", "pencil", "a_line", "tulip", "mermaid", "culottes", "gored_6"}
 _WAIST_CONICAL = {"half_circle", "full_circle", "hi_low"}
 _WAIST_RADIAL_GATHERED = {"hi_low_gathered"}
 _WAIST_FITTED_YOKE = {"yoke"}
@@ -151,7 +151,7 @@ SILHOUETTE_TITLES = {
     "straight": "Прямая", "pencil": "Карандаш", "a_line": "А-силуэт",
     "half_circle": "Полусолнце", "full_circle": "Солнце",
     "tulip": "Тюльпан", "mermaid": "Русалка/годе", "hi_low": "Асимметрия",
-    "bubble": "Баллон", "skort": "Юбка-шорты",
+    "bubble": "Баллон", "skort": "Юбка-шорты", "culottes": "Юбка-брюки", "gored_6": "Шестиклинка",
     "pleated": "Плиссе", "tiered": "Ярусная", "yoke": "Кокетка+сборка",
 }
 
@@ -171,6 +171,7 @@ CLOSURE_SPECS = {
     "zip_back": ComponentSpec("zip_back", SLOT_CLOSURE, "Молния сзади"),
     "slit": ComponentSpec("slit", SLOT_CLOSURE, "Шлица/разрез"),
     "wrap": ComponentSpec("wrap", SLOT_CLOSURE, "Запах"),
+    "button_front": ComponentSpec("button_front", SLOT_CLOSURE, "Сквозная планка на пуговицах"),
     "none": ComponentSpec("none", SLOT_CLOSURE, "Без застёжки (резинка)"),
 }
 
@@ -184,6 +185,8 @@ DETAIL_SPECS = {
                              note="подтип: inseam/patch/cargo/welt (по умолч. inseam)"),
     "slit_detail": ComponentSpec("slit_detail", SLOT_DETAIL, "Разрез", geometry_ready=False),
     "pleats_detail": ComponentSpec("pleats_detail", SLOT_DETAIL, "Складки", geometry_ready=False),
+    "straps": ComponentSpec("straps", SLOT_DETAIL, "Ремни и шлёвки", geometry_ready=True),
+    "paperbag": ComponentSpec("paperbag", SLOT_DETAIL, "Талия Paperbag", geometry_ready=True),
 }
 
 # --- Оверлеи (верхний крой; геометрия — Фаза 3) -------------------------- #
@@ -298,6 +301,73 @@ def resolve(selection: Dict[str, object], m: Measurements) -> Assembly:
     # --- 1. Несущий слой: строим силуэт через движок, убираем его пояс ----- #
     raw = build_pattern(silh, m)
     silh_pieces = [p for p in raw if p.name != "waistband"]
+    
+    closure = sel[SLOT_CLOSURE]
+    if closure == "wrap":
+        front_idx = -1
+        for idx, p in enumerate(silh_pieces):
+            if p.name == "front_panel":
+                front_idx = idx
+                break
+        if front_idx != -1:
+            import geometry_modifiers as GM
+            ov = m.H * 0.25  # 50% of half-hip width
+            wrapped = GM.apply_wrap(silh_pieces[front_idx], ov)
+            wrapped.name = "front_panel_wrap"
+            wrapped.quantity = 2
+            wrapped.cut_on_fold = False
+            silh_pieces[front_idx] = wrapped
+            
+            # Add belt ties (завязки/бант) as new pieces
+            tie_len = m.waist_cm * 0.75 + 45.0
+            tie_h = 8.0
+            from patterns import Edge, EdgeRole, PatternPiece
+            tie = PatternPiece(
+                name="tie",
+                edges=[
+                    Edge(role=EdgeRole.INTERNAL, points=[(0, 0), (tie_len, 0)]),
+                    Edge(role=EdgeRole.SIDE_RIGHT, points=[(tie_len, 0), (tie_len, tie_h)]),
+                    Edge(role=EdgeRole.WAIST, points=[(tie_len, tie_h), (0, tie_h)]),
+                    Edge(role=EdgeRole.SIDE_LEFT, points=[(0, tie_h), (0, 0)]),
+                ],
+                grain_line=((tie_len * 0.2, tie_h / 2), (tie_len * 0.8, tie_h / 2)),
+                labels=[{"text": f"ЗАВЯЗКА/БАНТ × 2 ({tie_len:.0f}×{tie_h:.0f})",
+                         "x": tie_len / 2, "y": tie_h / 2, "size": 1.0, "bold": True}],
+                notches=[(tie_len, tie_h / 2)],
+                quantity=2
+            )
+            silh_pieces.append(tie)
+        else:
+            warnings.append(f"Застежка 'wrap' не поддерживается для силуэта '{silh}' и была проигнорирована.")
+    elif closure == "button_front":
+        front_idx = -1
+        for idx, p in enumerate(silh_pieces):
+            if p.name == "front_panel":
+                front_idx = idx
+                break
+        if front_idx != -1:
+            import geometry_modifiers as GM
+            plack = GM.apply_placket(silh_pieces[front_idx])
+            plack.name = "front_panel_placket"
+            plack.quantity = 2
+            plack.cut_on_fold = False
+            silh_pieces[front_idx] = plack
+        else:
+            warnings.append(f"Застежка 'button_front' не поддерживается для силуэта '{silh}' и была проигнорирована.")
+
+    # --- Paperbag Waist Modifier ------------------------------------------- #
+    details = sel.get(SLOT_DETAIL) or sel.get("details") or []
+    if isinstance(details, str):
+        details = [details]
+    if "paperbag" in details:
+        if sel[SLOT_WAISTBAND] == "band":
+            warnings.append("Талия Paperbag несовместима с притачным поясом. Пояс заменен на кулиску/резинку.")
+            sel[SLOT_WAISTBAND] = "elastic"
+        import geometry_modifiers as GM
+        for idx, p in enumerate(silh_pieces):
+            if "panel" in p.name:
+                silh_pieces[idx] = GM.apply_paperbag(p, ruffle_h=4.0)
+
     waist_edge = silhouette_waist_edge(silh, silh_pieces, m)
     components: Dict[str, ComponentResult] = {
         SLOT_SILHOUETTE: ComponentResult(
@@ -382,6 +452,16 @@ def resolve(selection: Dict[str, object], m: Measurements) -> Assembly:
             detail_pieces.extend(pres.pieces)
             detail_steps.append(f"Карманы — {pres.title} ({pres.placement}):")
             detail_steps.extend(f"  • {s}" for s in pres.sewing_steps)
+        elif d == "straps":
+            import straps
+            st_pieces, st_steps = straps.build_straps_and_loops(m)
+            detail_pieces.extend(st_pieces)
+            detail_steps.extend(st_steps)
+        elif d == "paperbag":
+            detail_steps.append("Талия Paperbag:")
+            detail_steps.append("  • Заутюжить верхний срез на 1.0 см на изнанку.")
+            detail_steps.append("  • Проложить параллельные строчки на расстоянии 4.0 см от верха, формируя кулиску.")
+            detail_steps.append("  • Вдеть эластичную ленту (резинку) в кулиску, закрепить концы.")
         elif not spec.geometry_ready:
             warnings.append(f"Деталь «{spec.title}» пока вносится только в ТЗ (геометрия — позже).")
             detail_steps.append(f"Деталь: {spec.title}.")

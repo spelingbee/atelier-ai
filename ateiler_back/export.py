@@ -28,6 +28,33 @@ def _signed_area(pts: List[Point]) -> float:
     return s / 2.0
 
 
+def orient_points(points: List[Point]) -> List[Point]:
+    """Checks signed area and enforces CCW (sign=1.0) orientation using shapely if available."""
+    pts = points[:]
+    if pts and pts[0] != pts[-1]:
+        pts.append(pts[0])
+    
+    if len(pts) < 4:
+        return pts
+        
+    try:
+        from shapely.geometry import Polygon
+        from shapely.geometry.polygon import orient
+        poly = Polygon(pts)
+        if not poly.is_valid:
+            poly = poly.buffer(0)
+        oriented_poly = orient(poly, sign=1.0)
+        return [(float(x), float(y)) for x, y in oriented_poly.exterior.coords]
+    except Exception:
+        area = _signed_area(pts)
+        if area < 0:
+            pts_no_dup = pts[:-1]
+            reversed_pts = list(reversed(pts_no_dup))
+            reversed_pts.append(reversed_pts[0])
+            return reversed_pts
+        return pts
+
+
 def seam_outline(points: List[Point], margin_cm: float, mitre_limit: float = 3.0) -> List[Point]:
     """Припуск на швы: оффсет полигона наружу без внешних зависимостей.
 
@@ -112,10 +139,12 @@ def export_svg(pieces: List[PatternPiece], path: str,
     parts.append('<text x="0.6" y="6" font-size="0.5" fill="#e00">5x5 cm — проверь линейкой</text>')
 
     for p, dx, dy in placed:
-        shifted = [(x + dx, y + dy) for x, y in p.points]
+        oriented_pts = orient_points(p.points)
+        shifted = [(x + dx, y + dy) for x, y in oriented_pts]
         if add_seam:
-            outer = seam_outline(shifted, seam_cm)
-            parts.append(f'<path d="{_path_d(outer)}" fill="none" stroke="#999" '
+            outer = seam_outline(oriented_pts, seam_cm)
+            shifted_outer = [(x + dx, y + dy) for x, y in outer]
+            parts.append(f'<path d="{_path_d(shifted_outer)}" fill="none" stroke="#999" '
                          f'stroke-width="0.04" stroke-dasharray="0.4,0.3"/>')
         parts.append(f'<path d="{_path_d(shifted)}" fill="none" stroke="#000" stroke-width="0.06"/>')
         (gx1, gy1), (gx2, gy2) = p.grain_line
@@ -173,12 +202,14 @@ def export_pdf_tiled(pieces: List[PatternPiece], path: str,
         c.setStrokeColorRGB(0.9, 0, 0); c.setLineWidth(0.6)
         c.rect(0.5 * CM, 0.5 * CM, 5 * CM, 5 * CM, stroke=1, fill=0)
         for p, dx, dy in placed:
-            shifted = [((x + dx) * CM, (y + dy) * CM) for x, y in p.points]
+            oriented_pts = orient_points(p.points)
+            shifted = [((x + dx) * CM, (y + dy) * CM) for x, y in oriented_pts]
             if add_seam:
-                outer = seam_outline([(x + dx, y + dy) for x, y in p.points], seam_cm)
+                outer = seam_outline(oriented_pts, seam_cm)
+                shifted_outer = [((x + dx) * CM, (y + dy) * CM) for x, y in outer]
                 c.setStrokeColorRGB(0.6, 0.6, 0.6); c.setLineWidth(0.5)
                 c.setDash(3, 2)
-                _poly(c, [(x * CM, y * CM) for x, y in outer]); c.setDash()
+                _poly(c, shifted_outer); c.setDash()
             c.setStrokeColorRGB(0, 0, 0); c.setLineWidth(1.0)
             _poly(c, shifted)
             (gx1, gy1), (gx2, gy2) = p.grain_line

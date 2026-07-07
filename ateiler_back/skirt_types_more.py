@@ -51,19 +51,34 @@ def _darted_quarter(m: Measurements, hip_q: float, waist_q: float, *,
     waist_side_x = hip_q - side_take
     hem_x = hip_q + hem_offset
 
-    pts: List[Point] = [(0.0, 0.0), (0.0, cf), (hem_x, sl)]
+    side_pts = [(hem_x, sl)]
     if knee is not None:
-        pts.append((hip_q + knee[0], knee[1]))
-    pts += [(hip_q, hd), (waist_side_x, 0.0)]
+        side_pts.append((hip_q + knee[0], knee[1]))
+    side_pts.extend([(hip_q, hd), (waist_side_x, 0.0)])
+
+    edges = [
+        P.Edge(role=P.EdgeRole.CENTER_FOLD, points=[(0.0, 0.0), (0.0, cf)]),
+        P.Edge(role=P.EdgeRole.HEM, points=[(0.0, cf), (hem_x, sl)]),
+        P.Edge(role=P.EdgeRole.SIDE_RIGHT, points=side_pts),
+        P.Edge(role=P.EdgeRole.WAIST, points=[(waist_side_x, 0.0), (0.0, 0.0)]),
+    ]
+
+    notches = [(hip_q, hd)]
+    internal_edges = []
     dc = waist_side_x * 0.5
-    pts += [(dc + dart_w / 2, 0.0), (dc, dart_len), (dc - dart_w / 2, 0.0)]
-    pts.append((0.0, 0.0))
+    if dart_w > 0:
+        notches.append((dc - dart_w / 2, 0.0))
+        notches.append((dc + dart_w / 2, 0.0))
+        internal_edges.append(
+            P.Edge(role=P.EdgeRole.DART_LEG, points=[(dc - dart_w / 2, 0.0), (dc, dart_len), (dc + dart_w / 2, 0.0)])
+        )
+
     return PatternPiece(
-        name=name, points=pts,
+        name=name, edges=edges, internal_edges=internal_edges,
         grain_line=((hip_q * 0.45, 5), (hip_q * 0.45, min(cf, sl) - 5)),
         labels=[{"text": label, "x": hip_q * 0.42, "y": min(cf, sl) * 0.5,
                  "size": 1.3, "bold": True}],
-        notches=[(hip_q, hd)], cut_on_fold=True,
+        notches=notches, cut_on_fold=True,
     )
 
 

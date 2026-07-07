@@ -210,6 +210,7 @@ def build_tech_spec(selection: Dict[str, object], m: Measurements) -> Dict[str, 
 
     # застёжка
     if closure == "slit":
+        steps.append("Стачать передний шов до надсечки, оставив низ открытым под разрез.")
         steps.append("Обработать шлицу/разрез.")
     elif closure in ("zip_side", "zip_back"):
         steps.append(f"Втачать потайную молнию ({model['closure'].lower()}), оставив припуск.")

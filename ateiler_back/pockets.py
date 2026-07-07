@@ -9,7 +9,7 @@ AtelierAI — КАРМАНЫ (NEW FILE, аддитивно).
 4 базовых типа:
   • inseam  — карман в боковом шве (невидимый, мешковина)
   • patch   — накладной карман (прямоугольный со скруглённым низом)
-  • cargo   — накладной карман-карго с мехом (объёмный) + клапан
+  • cargo   — накладной карман-карго с боковиной (объёмный) + клапан
   • welt    — прорезной карман (обтачки + мешковина)
 
 Все координаты в сантиметрах. X = ширина (вправо), Y = вниз.
@@ -114,11 +114,11 @@ def build_patch_pocket(m: Measurements, width: float = 14.0, height: float = 16.
 
 
 # --------------------------------------------------------------------------- #
-#  3. Карман-карго с мехом + клапан (CARGO)
+#  3. Карман-карго с боковой объемной стенкой + клапан (CARGO)
 # --------------------------------------------------------------------------- #
 def build_cargo_pocket(m: Measurements, width: float = 16.0, height: float = 18.0,
                        hem: float = 3.5, gusset: float = 3.0, flap_h: float = 6.0) -> PocketResult:
-    """Объёмный карман: лицевая деталь + мех (объёмная вставка по 3 сторонам) + клапан."""
+    """Объёмный карман: лицевая деталь + боковина (объёмная вставка по 3 сторонам) + клапан."""
     face_h = height + hem
     face = PatternPiece(
         name="pocket_cargo_face", points=_round_bottom(width, face_h, r=1.5),
@@ -127,13 +127,13 @@ def build_cargo_pocket(m: Measurements, width: float = 16.0, height: float = 18.
                 {"text": f"{width:g}×{height:g}см · ×2", "x": width * 0.5, "y": face_h * 0.5 + 2, "size": 0.7}],
         notches=[(0.0, hem), (width, hem)], quantity=2,
     )
-    g_len = 2 * height + width   # мех оборачивает 2 бока + низ
+    g_len = 2 * height + width   # боковина оборачивает 2 бока + низ
     gusset_notches = [(height, 0.0), (height, gusset),
                       (height + width, 0.0), (height + width, gusset)]
     gus = PatternPiece(
         name="pocket_cargo_gusset", points=_rect(g_len, gusset),
         grain_line=((g_len * 0.5, gusset * 0.3), (g_len * 0.5, gusset * 0.7)),
-        labels=[{"text": f"МЕХ {gusset:g}см ×2", "x": g_len * 0.5, "y": gusset * 0.5, "size": 0.8, "bold": True}],
+        labels=[{"text": f"БОКОВИНА КАРМАНА {gusset:g}см ×2", "x": g_len * 0.5, "y": gusset * 0.5, "size": 0.8, "bold": True}],
         notches=gusset_notches, quantity=2,
     )
     fl_w = width + 1.0
@@ -146,14 +146,14 @@ def build_cargo_pocket(m: Measurements, width: float = 16.0, height: float = 18.
         notches=[(fl_w * 0.5, 0.0)], quantity=4,
     )
     steps = [
-        f"Карман-карго {width:g}×{height:g} см с мехом {gusset:g} см.",
-        "Притачать мех по 3 сторонам лицевой детали (надсечки — углы).",
+        f"Карман-карго {width:g}×{height:g} см с боковиной {gusset:g} см.",
+        "Притачать боковину по 3 сторонам лицевой детали (надсечки — углы).",
         "Подогнуть верх лица, настрочить карман на полотнище.",
         "Обтачать клапан (2 детали), настрочить над карманом.",
     ]
     return PocketResult("cargo", "Карман-карго", [face, gus, flap], steps,
                         placement="на передних/боковых полотнищах",
-                        notes="объёмный, с мехом и клапаном")
+                        notes="объёмный, с объемной боковиной и клапаном")
 
 
 # --------------------------------------------------------------------------- #
@@ -189,6 +189,91 @@ def build_welt_pocket(m: Measurements, opening: float = 14.0,
                         notes="в рамку/с обтачкой")
 
 
+def build_jeans_pocket(m: Measurements, pocket_width: float = 16.0,
+                       pocket_depth: float = 24.0) -> PocketResult:
+    """Джинсовый передний карман:
+    1. Мешковина кармана (pocket_jeans_lining)
+    2. Подзор кармана из денима (pocket_jeans_facing)
+    3. Монетный кармашек (pocket_jeans_coin)
+    """
+    w = pocket_width
+    h = pocket_depth
+    scoop_x = 7.0
+    scoop_y = 9.0
+
+    # 1. Мешковина (lining)
+    lining_pts = [
+        (0.0, 0.0),
+        (w - scoop_x, 0.0),
+        (w - scoop_x + 1.0, 2.0),
+        (w - 2.0, scoop_y - 1.0),
+        (w, scoop_y),
+        (w, h - 4.0),
+        (w - 4.0, h),
+        (0.0, h),
+        (0.0, 0.0)
+    ]
+    lining = PatternPiece(
+        name="pocket_jeans_lining", points=lining_pts,
+        grain_line=((w * 0.3, 4.0), (w * 0.3, h - 4.0)),
+        labels=[
+            {"text": "МЕШКОВИНА ДЖИНС. КАРМАНА", "x": w * 0.45, "y": h * 0.5, "size": 0.9, "bold": True},
+            {"text": "х4 (хлопок)", "x": w * 0.45, "y": h * 0.5 + 1.5, "size": 0.8},
+        ],
+        cut_on_fold=False, quantity=4
+    )
+
+    # 2. Подзор (facing)
+    facing_pts = [
+        (0.0, 0.0),
+        (1.0, 2.0),
+        (scoop_x + 1.0, scoop_y - 1.0),
+        (scoop_x + 3.0, scoop_y),
+        (scoop_x + 3.0, 15.0),
+        (0.0, 15.0),
+        (0.0, 0.0)
+    ]
+    facing = PatternPiece(
+        name="pocket_jeans_facing", points=facing_pts,
+        grain_line=((2.0, 2.0), (2.0, 13.0)),
+        labels=[
+            {"text": "ПОДЗОР КАРМАНА", "x": 4.0, "y": 6.0, "size": 0.8, "bold": True},
+            {"text": "х2 (деним)", "x": 4.0, "y": 7.5, "size": 0.7},
+        ],
+        cut_on_fold=False, quantity=2
+    )
+
+    # 3. Монетный карман (coin pocket)
+    coin_w, coin_h = 7.0, 8.0
+    coin_pts = [
+        (0.0, 0.0),
+        (0.0, coin_h),
+        (coin_w, coin_h),
+        (coin_w, 0.0),
+        (0.0, 0.0)
+    ]
+    coin = PatternPiece(
+        name="pocket_jeans_coin", points=coin_pts,
+        grain_line=((coin_w * 0.5, 1.5), (coin_w * 0.5, coin_h - 1.5)),
+        labels=[
+            {"text": "МОНЕТНЫЙ", "x": coin_w * 0.5, "y": coin_h * 0.4, "size": 0.6, "bold": True},
+            {"text": "х2 (деним)", "x": coin_w * 0.5, "y": coin_h * 0.7, "size": 0.5},
+        ],
+        cut_on_fold=False, quantity=2
+    )
+
+    steps = [
+        "Джинсовый карман: настрочить монетный карман на правый подзор.",
+        "Настрочить джинсовые подзоры на хлопковые мешковины кармана.",
+        "Притачать мешковину по линии входа (скругление scoop), рассечь припуски, вывернуть и отстрочить.",
+        "Совместить срезы мешковины, стачать нижний шов.",
+        "Закрепить карман по талии и боковому шву вспомогательной строчкой."
+    ]
+    return PocketResult("jeans", "Джинсовый карман", [lining, facing, coin], steps,
+                        placement="на переднем полотнище (вход сбоку)",
+                        notes="классический джинсовый карман с подзором и часовым кармашком")
+
+
 # --------------------------------------------------------------------------- #
 #  Реестр
 # --------------------------------------------------------------------------- #
@@ -197,6 +282,7 @@ POCKET_REGISTRY: Dict[str, Callable[..., PocketResult]] = {
     "patch": build_patch_pocket,
     "cargo": build_cargo_pocket,
     "welt": build_welt_pocket,
+    "jeans": build_jeans_pocket,
 }
 
 POCKET_TITLES = {
@@ -204,6 +290,7 @@ POCKET_TITLES = {
     "patch": "Накладной карман",
     "cargo": "Карман-карго",
     "welt": "Прорезной карман",
+    "jeans": "Джинсовый карман",
 }
 
 

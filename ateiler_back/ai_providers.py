@@ -38,7 +38,15 @@ SYSTEM_PROMPT = (
     "You classify women's skirt photos for a pattern-making service. "
     "Pick the closest skirt_type from the allowed list. If unsure, give the best "
     "guess with low confidence. Never invent measurements — only describe what is "
-    "visible. Always return the structured object."
+    "visible. "
+    "Also, analyze the visual design and: "
+    "1. Recommend appropriate fabrics (e.g. density, texture, weave) in Russian (fabric_recommendation). "
+    "2. Estimate how closely our pattern-making engine can recreate this design on a scale of 0 to 100 (similarity_percentage). "
+    "   Be extremely honest: basic shapes/gored/tiered get 90-100%, wrap with cargo/crossover waistbands get 80-90%, but complex "
+    "   asymmetric draping, spiral folds, or custom side godet contrast panels get 30-65% similarity. "
+    "3. Briefly explain this percentage in Russian (similarity_explanation) identifying what can be built perfectly "
+    "   and what will be simplified or omitted. "
+    "4. Provide a technical specification / preparation sewing notes (ТЗ) in Russian (technical_specification_notes)."
 )
 
 # Схема полей (общая для обоих провайдеров)
@@ -56,8 +64,16 @@ _FIELDS = {
     "has_pockets": ("boolean", None),
     "silhouette_notes": ("string", None),
     "confidence": ("number", None),
+    "fabric_recommendation": ("string", None),
+    "similarity_percentage": ("integer", None),
+    "similarity_explanation": ("string", None),
+    "technical_specification_notes": ("string", None),
 }
-_REQUIRED = ["skirt_type", "estimated_length", "has_waistband", "confidence"]
+_REQUIRED = [
+    "skirt_type", "estimated_length", "has_waistband", "confidence",
+    "fabric_recommendation", "similarity_percentage", "similarity_explanation",
+    "technical_specification_notes"
+]
 
 
 def _anthropic_schema() -> dict:
@@ -97,6 +113,15 @@ def _sanitize(result: Dict) -> Dict:
     result.setdefault("silhouette_notes", "")
     result["confidence"] = float(result.get("confidence", 0.5))
     result["length_hint_cm"] = LENGTH_HINT_CM.get(result["estimated_length"], 60)
+    
+    # New fields defaults
+    result.setdefault("fabric_recommendation", "Рекомендуется плотная костюмная ткань, шерсть или деним.")
+    try:
+        result["similarity_percentage"] = int(result.get("similarity_percentage", 85))
+    except Exception:
+        result["similarity_percentage"] = 85
+    result.setdefault("similarity_explanation", "Основа силуэта строится корректно, карманы и кокетки полностью соответствуют.")
+    result.setdefault("technical_specification_notes", "Техническое задание на пошив базовой юбки со стандартной сборкой деталей.")
     return result
 
 
@@ -116,6 +141,8 @@ def _resolve_provider(provider: Optional[str]) -> str:
     env = os.getenv("AI_PROVIDER")
     if env:
         return env.lower()
+    if os.getenv("OPENAI_API_KEY"):
+        return "openai"
     if os.getenv("ANTHROPIC_API_KEY"):
         return "anthropic"
     if os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"):
@@ -193,15 +220,56 @@ async def _classify_gemini(image_path: str) -> Dict:
     return res
 
 
+async def _classify_openai(image_path: str) -> Dict:
+    import httpx
+    api_key = os.environ["OPENAI_API_KEY"]
+    model = os.getenv("OPENAI_CLASSIFY_MODEL", "gpt-4o-mini")
+    media, img_b64 = _read_image(image_path)
+    url = "https://api.openai.com/v1/chat/completions"
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": [
+                {"type": "text", "text": "Classify this skirt and return the structured JSON."},
+                {"type": "image_url", "image_url": {"url": f"data:{media};base64,{img_b64}"}}
+            ]}
+        ],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "report_skirt",
+                "schema": _anthropic_schema()
+            }
+        },
+        "temperature": 0
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    async with httpx.AsyncClient(timeout=40.0) as client:
+        resp = await client.post(url, json=payload, headers=headers)
+        if resp.status_code != 200:
+            raise RuntimeError(f"OpenAI API error {resp.status_code}: {resp.text}")
+        data = resp.json()
+    text = data["choices"][0]["message"]["content"]
+    res = _sanitize(json.loads(text))
+    res["_provider"] = "openai"
+    return res
+
+
 async def classify_skirt_image(image_path: str,
                                provider: Optional[str] = None) -> Dict:
-    """Главная точка входа. provider: anthropic | gemini | mock | None(авто)."""
+    """Главная точка входа. provider: anthropic | gemini | openai | mock | None(авто)."""
     p = _resolve_provider(provider)
     try:
         if p == "anthropic":
             return await _classify_anthropic(image_path)
         if p == "gemini":
             return await _classify_gemini(image_path)
+        if p == "openai":
+            return await _classify_openai(image_path)
         return mock_classify(image_path, "mock")
     except Exception as e:  # сеть/ключ упали — не роняем пайплайн
         res = mock_classify(image_path, f"{p}-fallback")

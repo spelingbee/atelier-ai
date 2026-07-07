@@ -79,17 +79,20 @@ class PatternPiece:
     notches: List[Point] = field(default_factory=list)
     cut_on_fold: bool = False                 # левый край — сгиб
     quantity: int = 1
+    internal_edges: List[Edge] = field(default_factory=list)
 
     def __init__(self, name: str, points: List[Point] = None, edges: List[Edge] = None,
                  grain_line: Tuple[Point, Point] = ((0, 0), (0, 0)),
                  labels: List[dict] = None, notches: List[Point] = None,
-                 cut_on_fold: bool = False, quantity: int = 1):
+                 cut_on_fold: bool = False, quantity: int = 1,
+                 internal_edges: List[Edge] = None):
         self.name = name
         self.grain_line = grain_line
         self.labels = labels if labels is not None else []
         self.notches = notches if notches is not None else []
         self.cut_on_fold = cut_on_fold
         self.quantity = quantity
+        self.internal_edges = internal_edges if internal_edges is not None else []
         
         if edges is not None:
             self.edges = edges
@@ -168,32 +171,31 @@ class StraightSkirtPattern:
             Edge(role=EdgeRole.CENTER_FOLD, points=[(0.0, 0.0), (0.0, L)]),
             Edge(role=EdgeRole.HEM, points=[(0.0, L), (hem_x, L)]),
             Edge(role=EdgeRole.SIDE_RIGHT, points=[(hem_x, L), (hip_q, hd), (waist_side_x, 0.0)]),
+            Edge(role=EdgeRole.WAIST, points=[(waist_side_x, 0.0), (0.0, 0.0)]),
         ]
         
         # waist dart, centred between fold and side
         dc = waist_side_x * 0.5
+        notches = [(hip_q, hd)]
+        internal_edges = []
         if dart_w > 0:
-            edges.extend([
-                Edge(role=EdgeRole.WAIST, points=[(waist_side_x, 0.0), (dc + dart_w / 2, 0.0)]),
-                Edge(role=EdgeRole.DART_LEG, points=[(dc + dart_w / 2, 0.0), (dc, dart_len)]),
-                Edge(role=EdgeRole.DART_LEG, points=[(dc, dart_len), (dc - dart_w / 2, 0.0)]),
-                Edge(role=EdgeRole.WAIST, points=[(dc - dart_w / 2, 0.0), (0.0, 0.0)]),
-            ])
-        else:
-            edges.append(
-                Edge(role=EdgeRole.WAIST, points=[(waist_side_x, 0.0), (0.0, 0.0)])
+            notches.append((dc - dart_w / 2, 0.0))
+            notches.append((dc + dart_w / 2, 0.0))
+            internal_edges.append(
+                Edge(role=EdgeRole.DART_LEG, points=[(dc - dart_w / 2, 0.0), (dc, dart_len), (dc + dart_w / 2, 0.0)])
             )
 
         return PatternPiece(
             name=name,
             edges=edges,
+            internal_edges=internal_edges,
             grain_line=((hip_q * 0.45, 5), (hip_q * 0.45, L - 5)),
             labels=[
                 {"text": label, "x": hip_q * 0.45, "y": L * 0.5, "size": 1.4, "bold": True},
                 {"text": f"Т{m.waist_cm:g} Б{m.hip_cm:g} Д{m.length_cm:g}",
                  "x": hip_q * 0.45, "y": L * 0.5 + 2, "size": 0.7},
             ],
-            notches=[(hip_q, hd)],
+            notches=notches,
             cut_on_fold=True,
         )
 
@@ -261,22 +263,29 @@ class ALineSkirtPattern:
         hem_x = hip_q + self.flare
         dart_len = 9.0
 
-        pts: List[Point] = [
-            (0.0, 0.0),
-            (0.0, L),
-            (hem_x, L),
-            (hip_q, hd),
-            (waist_side_x, 0.0),
+        # Define edges, CCW
+        edges = [
+            Edge(role=EdgeRole.CENTER_FOLD, points=[(0.0, 0.0), (0.0, L)]),
+            Edge(role=EdgeRole.HEM, points=[(0.0, L), (hem_x, L)]),
+            Edge(role=EdgeRole.SIDE_RIGHT, points=[(hem_x, L), (hip_q, hd), (waist_side_x, 0.0)]),
+            Edge(role=EdgeRole.WAIST, points=[(waist_side_x, 0.0), (0.0, 0.0)]),
         ]
+        
+        notches = [(hip_q, hd)]
+        internal_edges = []
         dc = waist_side_x * 0.5
-        pts += [(dc + dart_w / 2, 0.0), (dc, dart_len), (dc - dart_w / 2, 0.0)]
-        pts.append((0.0, 0.0))
-
+        if dart_w > 0:
+            notches.append((dc - dart_w / 2, 0.0))
+            notches.append((dc + dart_w / 2, 0.0))
+            internal_edges.append(
+                Edge(role=EdgeRole.DART_LEG, points=[(dc - dart_w / 2, 0.0), (dc, dart_len), (dc + dart_w / 2, 0.0)])
+            )
+            
         return PatternPiece(
-            name=name, points=pts,
+            name=name, edges=edges, internal_edges=internal_edges,
             grain_line=((hip_q * 0.45, 5), (hip_q * 0.45, L - 5)),
             labels=[{"text": label, "x": hip_q * 0.45, "y": L * 0.5, "size": 1.4, "bold": True}],
-            notches=[(hip_q, hd)], cut_on_fold=True,
+            notches=notches, cut_on_fold=True,
         )
 
     def generate(self) -> List[PatternPiece]:

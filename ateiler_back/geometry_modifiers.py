@@ -42,6 +42,51 @@ def line_intersection(p1: Point, p2: Point, p3: Point, p4: Point) -> Optional[Po
     return x, y
 
 
+def _convert_internal_darts_to_physical(piece: PatternPiece) -> PatternPiece:
+    if not piece.internal_edges:
+        return piece
+    darts = [ie for ie in piece.internal_edges if ie.role == EdgeRole.DART_LEG]
+    if not darts:
+        return piece
+        
+    new_edges = []
+    for edge in piece.edges:
+        if edge.role == EdgeRole.WAIST:
+            pts = list(edge.points)
+            sorted_darts = sorted(darts, key=lambda d: sum(p[0] for p in d.points)/len(d.points), reverse=True)
+            
+            waist_pts = [pts[0]]
+            for d in sorted_darts:
+                p_left, p_apex, p_right = d.points[0], d.points[1], d.points[2]
+                waist_pts.extend([p_right, p_apex, p_left])
+            waist_pts.append(pts[-1])
+            
+            i = 0
+            while i < len(waist_pts) - 1:
+                p1 = waist_pts[i]
+                p2 = waist_pts[i+1]
+                is_dart = False
+                for d in darts:
+                    if p2 == d.points[1] or p1 == d.points[1]:
+                        is_dart = True
+                        break
+                role = EdgeRole.DART_LEG if is_dart else EdgeRole.WAIST
+                new_edges.append(Edge(role=role, points=[p1, p2]))
+                i += 1
+        else:
+            new_edges.append(Edge(role=edge.role, points=list(edge.points), curve_type=edge.curve_type))
+            
+    return PatternPiece(
+        name=piece.name,
+        edges=new_edges,
+        grain_line=piece.grain_line,
+        labels=piece.labels,
+        notches=piece.notches,
+        cut_on_fold=piece.cut_on_fold,
+        quantity=piece.quantity
+    )
+
+
 def _validate_and_fix_piece(piece: PatternPiece, original_piece: PatternPiece) -> PatternPiece:
     """
     Validates piece's polygon using shapely.is_valid.
@@ -114,6 +159,11 @@ def mirror_asymmetry(piece: PatternPiece, fold_axis: str = "CF") -> List[Pattern
         
     new_notches = list(piece.notches) + [mirror_point(p) for p in piece.notches]
 
+    new_internal_edges = list(piece.internal_edges)
+    for ie in piece.internal_edges:
+        mirrored_pts = [mirror_point(p) for p in reversed(ie.points)]
+        new_internal_edges.append(Edge(role=ie.role, points=mirrored_pts, curve_type=ie.curve_type))
+
     mirrored_piece = PatternPiece(
         name=f"{piece.name}_mirrored",
         edges=new_edges,
@@ -121,7 +171,8 @@ def mirror_asymmetry(piece: PatternPiece, fold_axis: str = "CF") -> List[Pattern
         labels=new_labels,
         notches=new_notches,
         cut_on_fold=False,
-        quantity=1
+        quantity=1,
+        internal_edges=new_internal_edges
     )
     return [_validate_and_fix_piece(mirrored_piece, piece)]
 
@@ -312,6 +363,8 @@ def cut_yoke(piece: PatternPiece, height_cm: float, height_right_cm: Optional[fl
         # Fallback if Shapely is missing: return original piece
         return [piece]
 
+    piece = _convert_internal_darts_to_physical(piece)
+
     h_left = height_cm
     h_right = height_right_cm if height_right_cm is not None else height_cm
 
@@ -473,17 +526,57 @@ def apply_wrap(piece: PatternPiece, overlap_cm: float) -> PatternPiece:
             bottom_ext = Edge(role=EdgeRole.HEM, points=[(0.0, y_max), (overlap_cm, y_max)])
             new_edges = new_edges[:fold_idx] + [top_ext, left_edge, bottom_ext] + new_edges[fold_idx+1:]
 
-    wrapped_piece = PatternPiece(
-        name=piece.name + "_wrap",
-        edges=new_edges,
-        grain_line=((piece.grain_line[0][0] + overlap_cm, piece.grain_line[0][1]),
-                    (piece.grain_line[1][0] + overlap_cm, piece.grain_line[1][1])),
-        labels=[{**lbl, "x": lbl["x"] + overlap_cm} for lbl in piece.labels],
-        notches=[(n[0] + overlap_cm, n[1]) for n in piece.notches],
-        cut_on_fold=False,
-        quantity=piece.quantity
-    )
-    return _validate_and_fix_piece(wrapped_piece, piece)
+        wrapped_piece = PatternPiece(
+            name=piece.name + "_wrap",
+            edges=new_edges,
+            grain_line=((piece.grain_line[0][0] + overlap_cm, piece.grain_line[0][1]),
+                        (piece.grain_line[1][0] + overlap_cm, piece.grain_line[1][1])),
+            labels=[{**lbl, "x": lbl["x"] + overlap_cm} for lbl in piece.labels],
+            notches=[(n[0] + overlap_cm, n[1]) for n in piece.notches],
+            cut_on_fold=False,
+            quantity=piece.quantity
+        )
+        return _validate_and_fix_piece(wrapped_piece, piece)
+    else:
+        # Fallback if no center fold edge (e.g. skort skirt_flap built only with points)
+        pts = piece.points
+        y_coords = [p[1] for p in pts]
+        y_min = min(y_coords) if y_coords else 0.0
+        y_max = max(y_coords) if y_coords else 70.0
+        
+        # We replace the center fold segment (starts at X=0, ends at X=0)
+        # Find index where transition on X=0 occurs (from 0,0 to 0,cf)
+        new_pts = []
+        replaced = False
+        for idx in range(len(pts)):
+            p1 = pts[idx]
+            p2 = pts[(idx + 1) % len(pts)]
+            if not replaced and abs(p1[0]) < 1e-3 and abs(p2[0]) < 1e-3:
+                new_pts.append(p1)
+                new_pts.append((-overlap_cm, p1[1]))
+                new_pts.append((-overlap_cm, p2[1]))
+                replaced = True
+            else:
+                new_pts.append(p1)
+        if not replaced:
+            new_pts = [((x - overlap_cm) if x <= 1e-3 else x, y) for x, y in pts]
+            
+        min_x = min(p[0] for p in new_pts)
+        shifted_pts = [(p[0] - min_x, p[1]) for p in new_pts]
+        
+        wrapped_piece = PatternPiece(
+            name=piece.name + "_wrap",
+            points=shifted_pts,
+            grain_line=((piece.grain_line[0][0] + overlap_cm, piece.grain_line[0][1]),
+                        (piece.grain_line[1][0] + overlap_cm, piece.grain_line[1][1])),
+            labels=piece.labels + [
+                {"text": "ЗАПАХ", "x": overlap_cm * 0.5, "y": (y_min + y_max) * 0.5, "size": 0.8, "bold": True}
+            ],
+            notches=piece.notches,
+            cut_on_fold=False,
+            quantity=piece.quantity
+        )
+        return _validate_and_fix_piece(wrapped_piece, piece)
 
 
 def apply_placket(piece: PatternPiece, placket_width: float = 3.0) -> PatternPiece:
@@ -599,3 +692,416 @@ def apply_paperbag(piece: PatternPiece, ruffle_h: float = 4.0) -> PatternPiece:
         quantity=piece.quantity
     )
     return _validate_and_fix_piece(paperbag_piece, piece)
+
+
+def apply_crossover_waistband(piece: PatternPiece, overlap_cm: float = 6.0) -> PatternPiece:
+    """
+    Extends the waistband piece and shapes the overlapping end for crossover style.
+    """
+    if piece.name != "waistband":
+        return piece
+    pts = piece.points
+    if not pts or len(pts) < 4:
+        return piece
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    w = max(xs) - min(xs)
+    h = max(ys) - min(ys)
+    new_w = w + overlap_cm
+    
+    # Define new points for crossover waistband (CCW)
+    new_pts = [
+        (0.0, 0.0),
+        (0.0, h),
+        (new_w, h),
+        (new_w, h * 0.25),
+        (new_w - 1.0, 0.0),
+        (0.0, 0.0)
+    ]
+    
+    new_notches = list(piece.notches)
+    new_notches.append((new_w - overlap_cm, 0.0))
+    new_notches.append((new_w - overlap_cm, h))
+
+    crossover_piece = PatternPiece(
+        name="waistband_crossover",
+        points=new_pts,
+        grain_line=((new_w * 0.25, h / 2), (new_w * 0.75, h / 2)),
+        labels=[
+            {"text": "ПОЯС Crossover × 2", "x": new_w / 2, "y": h / 2, "size": 1.0, "bold": True},
+            {"text": f"+{overlap_cm:g} см нахлест", "x": new_w / 2, "y": h / 2 + 1.5, "size": 0.8},
+            {"text": "🔘", "x": new_w - overlap_cm / 2, "y": h / 2, "size": 0.8}
+        ],
+        notches=new_notches,
+        quantity=piece.quantity
+    )
+    return _validate_and_fix_piece(crossover_piece, piece)
+
+
+def cut_back_yoke(piece: PatternPiece, yoke_depth_center: float = 8.0, yoke_depth_side: float = 4.0) -> List[PatternPiece]:
+    """
+    Slices the back piece to create a V-shaped yoke.
+    Handles both half-pieces (cut_on_fold=True) and full-width pieces (cut_on_fold=False).
+    """
+    if not _HAS_SHAPELY:
+        return [piece]
+        
+    pts = piece.points
+    xs = [p[0] for p in pts]
+    min_x, max_x = min(xs), max(xs)
+    
+    poly = Polygon(pts)
+    
+    if piece.cut_on_fold:
+        # Half-panel: slice line is just a diagonal line
+        slice_line = LineString([(min_x - 10.0, yoke_depth_center), (max_x + 10.0, yoke_depth_side)])
+    else:
+        # Full-panel: V-shaped slice line
+        slice_line = LineString([
+            (min_x - 10.0, yoke_depth_side),
+            (0.0, yoke_depth_center),
+            (max_x + 10.0, yoke_depth_side)
+        ])
+        
+    split_result = split(poly, slice_line)
+    yoke_polys = []
+    remainder_polys = []
+    
+    for geom in split_result.geoms:
+        cx, cy = geom.centroid.x, geom.centroid.y
+        # Compute the V-line cutoff Y at the centroid's X coordinate
+        if piece.cut_on_fold:
+            t = (cx - min_x) / (max_x - min_x) if max_x > min_x else 0.0
+            cutoff_y = yoke_depth_center + (yoke_depth_side - yoke_depth_center) * t
+        else:
+            t = abs(cx) / max(1.0, max_x)
+            cutoff_y = yoke_depth_center + (yoke_depth_side - yoke_depth_center) * t
+            
+        coords = list(geom.exterior.coords)
+        if cy < cutoff_y:
+            yoke_polys.append(coords)
+        else:
+            remainder_polys.append(coords)
+            
+    # Process remainder piece(s)
+    remainder_pieces = []
+    for idx, coords in enumerate(remainder_polys):
+        rem_edges = recover_edges(coords, piece.edges, slice_line)
+        for e in rem_edges:
+            if e.role == EdgeRole.INTERNAL:
+                mid = e.points[len(e.points)//2]
+                if slice_line.distance(ShPoint(mid)) < 1e-3:
+                    e.role = EdgeRole.WAIST
+                    
+        rem_piece = PatternPiece(
+            name=f"{piece.name}_remainder_{idx+1}" if len(remainder_polys) > 1 else f"{piece.name}_remainder",
+            edges=rem_edges,
+            grain_line=piece.grain_line,
+            labels=[l for l in piece.labels if l["y"] > yoke_depth_center],
+            notches=[n for n in piece.notches if n[1] >= min(yoke_depth_center, yoke_depth_side)],
+            cut_on_fold=piece.cut_on_fold,
+            quantity=piece.quantity
+        )
+        rem_piece = _validate_and_fix_piece(rem_piece, piece)
+        remainder_pieces.append(rem_piece)
+        
+    # Process yoke piece(s)
+    yoke_pieces = []
+    for idx, coords in enumerate(yoke_polys):
+        yoke_edges = recover_edges(coords, piece.edges, slice_line)
+        for e in yoke_edges:
+            if e.role == EdgeRole.INTERNAL:
+                mid = e.points[len(e.points)//2]
+                if slice_line.distance(ShPoint(mid)) < 1e-3:
+                    e.role = EdgeRole.HEM
+                    
+        yoke_piece = PatternPiece(
+            name=f"{piece.name}_yoke_{idx+1}" if len(yoke_polys) > 1 else f"{piece.name}_yoke",
+            edges=yoke_edges,
+            grain_line=((0.0, yoke_depth_center / 2), (0.0, yoke_depth_center / 2 + 2.0)),
+            labels=[
+                {"text": "КОКЕТКА СПИНКИ", "x": 0.0, "y": yoke_depth_center / 2, "size": 0.9, "bold": True},
+                {"text": f"деним · х{piece.quantity}", "x": 0.0, "y": yoke_depth_center / 2 + 1.2, "size": 0.7}
+            ],
+            notches=[n for n in piece.notches if n[1] < max(yoke_depth_center, yoke_depth_side)],
+            cut_on_fold=piece.cut_on_fold,
+            quantity=piece.quantity
+        )
+        
+        # Close darts on back yoke
+        yoke_piece = close_darts_in_yoke(yoke_piece)
+        yoke_piece = _validate_and_fix_piece(yoke_piece, piece)
+        yoke_pieces.append(yoke_piece)
+        
+    return yoke_pieces + remainder_pieces
+
+
+def split_and_insert_wedge(piece: PatternPiece, split_x_ratio: float = 0.6,
+                           wedge_width_top: float = 0.0, wedge_width_bottom: float = 16.0,
+                           pleated: bool = True) -> List[PatternPiece]:
+    """
+    Slices the pattern piece vertically at split_x_ratio.
+    Returns: [left_piece, right_piece, wedge_piece]
+    If pleated=True, the wedge is expanded with pleat folds.
+    """
+    if not _HAS_SHAPELY:
+        return [piece]
+        
+    pts = piece.points
+    xs = [p[0] for p in pts]
+    min_x, max_x = min(xs), max(xs)
+    w = max_x - min_x
+    split_x = min_x + w * split_x_ratio
+    
+    poly = Polygon(pts)
+    slice_line = LineString([(split_x, -10.0), (split_x, max(p[1] for p in pts) + 10.0)])
+    
+    split_result = split(poly, slice_line)
+    left_polys = []
+    right_polys = []
+    
+    for geom in split_result.geoms:
+        cx = geom.centroid.x
+        coords = list(geom.exterior.coords)
+        if cx < split_x:
+            left_polys.append(coords)
+        else:
+            right_polys.append(coords)
+            
+    if not left_polys or not right_polys:
+        return [piece]
+        
+    left_coords = left_polys[0]
+    right_coords = right_polys[0]
+    
+    left_edges = recover_edges(left_coords, piece.edges, slice_line)
+    right_edges = recover_edges(right_coords, piece.edges, slice_line)
+    
+    for e in left_edges + right_edges:
+        if e.role == EdgeRole.INTERNAL:
+            mid = e.points[len(e.points)//2]
+            if abs(mid[0] - split_x) < 1e-3:
+                e.role = EdgeRole.INTERNAL
+                
+    left_ie = [ie for ie in piece.internal_edges if sum(p[0] for p in ie.points)/len(ie.points) < split_x]
+    right_ie = [ie for ie in piece.internal_edges if sum(p[0] for p in ie.points)/len(ie.points) >= split_x]
+
+    left_piece = PatternPiece(
+        name=f"{piece.name}_left",
+        edges=left_edges,
+        grain_line=piece.grain_line,
+        labels=[{"text": "ЛЕВАЯ ЧАСТЬ", "x": (min_x + split_x)/2, "y": max(p[1] for p in pts)*0.5, "size": 0.9, "bold": True}],
+        notches=[n for n in piece.notches if n[0] < split_x],
+        cut_on_fold=piece.cut_on_fold,
+        quantity=piece.quantity,
+        internal_edges=left_ie
+    )
+    left_piece = _validate_and_fix_piece(left_piece, piece)
+    
+    right_piece = PatternPiece(
+        name=f"{piece.name}_right",
+        edges=right_edges,
+        grain_line=piece.grain_line,
+        labels=[{"text": "ПРАВАЯ ЧАСТЬ", "x": (split_x + max_x)/2, "y": max(p[1] for p in pts)*0.5, "size": 0.9, "bold": True}],
+        notches=[n for n in piece.notches if n[0] >= split_x],
+        cut_on_fold=False,
+        quantity=piece.quantity,
+        internal_edges=right_ie
+    )
+    right_piece = _validate_and_fix_piece(right_piece, piece)
+    
+    ys = [p[1] for p in left_coords if abs(p[0] - split_x) < 1e-3]
+    h = max(ys) - min(ys) if ys else 70.0
+    
+    wedge_pts = [
+        (0.0, 0.0),
+        (0.0, h),
+        (wedge_width_bottom, h),
+        (wedge_width_top, 0.0),
+        (0.0, 0.0)
+    ]
+    
+    wedge_piece = PatternPiece(
+        name=f"{piece.name}_wedge",
+        points=wedge_pts,
+        grain_line=((wedge_width_bottom * 0.5, 5.0), (wedge_width_bottom * 0.5, h - 5.0)),
+        labels=[
+            {"text": "ВСТАВКА КЛИН-ГОДЕ", "x": wedge_width_bottom * 0.5, "y": h * 0.5, "size": 0.9, "bold": True},
+            {"text": "плиссе" if pleated else "контраст", "x": wedge_width_bottom * 0.5, "y": h * 0.5 + 2.0, "size": 0.7}
+        ],
+        cut_on_fold=False,
+        quantity=piece.quantity
+    )
+    
+    if pleated:
+        pleated_wedge = apply_pleats(wedge_piece, count=4, pleat_width=3.0)[0]
+        pleated_wedge.name = f"{piece.name}_wedge_pleated"
+        wedge_piece = pleated_wedge
+        
+    wedge_piece = _validate_and_fix_piece(wedge_piece, piece)
+    
+    return [left_piece, right_piece, wedge_piece]
+
+
+def apply_draped_wrap(piece: PatternPiece, overlap_cm: float, cascade_depth_cm: float = 15.0) -> PatternPiece:
+    """
+    Extends the front panel to create a wrap panel, but extends the wrap edge's bottom corner
+    downwards by cascade_depth_cm to form an asymmetrical cascading hem.
+    Also adds draping fold line guides.
+    """
+    if overlap_cm <= 0:
+        return piece
+
+    edges = list(piece.edges)
+    new_edges = []
+    for edge in edges:
+        shifted_points = [(x + overlap_cm, y) for x, y in edge.points]
+        new_edges.append(Edge(role=edge.role, points=shifted_points, curve_type=edge.curve_type))
+
+    fold_idx = -1
+    for idx, edge in enumerate(new_edges):
+        if edge.role == EdgeRole.CENTER_FOLD:
+            fold_idx = idx
+            break
+
+    all_ys = [p[1] for p in piece.points]
+    y_min = min(all_ys) if all_ys else 0.0
+    y_max = max(all_ys) if all_ys else 70.0
+    y_cascade = y_max + cascade_depth_cm
+
+    if fold_idx != -1:
+        fold_edge = new_edges[fold_idx]
+        pts = fold_edge.points
+        y_coords = [p[1] for p in pts]
+        y_min = min(y_coords)
+        y_max = max(y_coords)
+        y_cascade = y_max + cascade_depth_cm
+        
+        is_bottom_to_top = (pts[0][1] > pts[-1][1])
+        
+        if is_bottom_to_top:
+            bottom_ext = Edge(role=EdgeRole.HEM, points=[(overlap_cm, y_max), (0.0, y_cascade)])
+            left_edge = Edge(role=EdgeRole.INTERNAL, points=[(0.0, y_cascade), (0.0, y_min)])
+            top_ext = Edge(role=EdgeRole.WAIST, points=[(0.0, y_min), (overlap_cm, y_min)])
+            new_edges = new_edges[:fold_idx] + [bottom_ext, left_edge, top_ext] + new_edges[fold_idx+1:]
+        else:
+            top_ext = Edge(role=EdgeRole.WAIST, points=[(overlap_cm, y_min), (0.0, y_min)])
+            left_edge = Edge(role=EdgeRole.INTERNAL, points=[(0.0, y_min), (0.0, y_cascade)])
+            bottom_ext = Edge(role=EdgeRole.HEM, points=[(0.0, y_cascade), (overlap_cm, y_max)])
+            new_edges = new_edges[:fold_idx] + [top_ext, left_edge, bottom_ext] + new_edges[fold_idx+1:]
+
+        wrapped_piece = PatternPiece(
+            name=piece.name + "_draped_wrap",
+            edges=new_edges,
+            grain_line=((piece.grain_line[0][0] + overlap_cm, piece.grain_line[0][1]),
+                        (piece.grain_line[1][0] + overlap_cm, piece.grain_line[1][1])),
+            labels=piece.labels + [
+                {"text": "ДРАПИРОВАННЫЙ ЗАПАХ", "x": overlap_cm * 0.5, "y": (y_min + y_max) * 0.5, "size": 0.8, "bold": True},
+                {"text": f"сборка по линии талии", "x": overlap_cm * 0.5, "y": (y_min + y_max) * 0.5 + 2.0, "size": 0.7}
+            ],
+            notches=piece.notches,
+            cut_on_fold=False,
+            quantity=2
+        )
+        wrapped_piece.notches.append((0.0, y_max))
+        wrapped_piece.notches.append((0.0, y_cascade - 5.0))
+        return _validate_and_fix_piece(wrapped_piece, piece)
+    else:
+        # Fallback if no center fold edge (e.g. skort skirt_flap)
+        pts = piece.points
+        new_pts = []
+        replaced = False
+        for idx in range(len(pts)):
+            p1 = pts[idx]
+            p2 = pts[(idx + 1) % len(pts)]
+            if not replaced and abs(p1[0]) < 1e-3 and abs(p2[0]) < 1e-3:
+                new_pts.append(p1)
+                new_pts.append((-overlap_cm, p1[1]))
+                new_pts.append((-overlap_cm, p2[1] + cascade_depth_cm))
+                new_pts.append((0.0, p2[1] + cascade_depth_cm))
+                replaced = True
+            else:
+                new_pts.append(p1)
+        if not replaced:
+            new_pts = [((x - overlap_cm) if x <= 1e-3 else x, (y + cascade_depth_cm) if (abs(x) < 1e-3 and y >= y_max - 5.0) else y) for x, y in pts]
+            
+        min_x = min(p[0] for p in new_pts)
+        shifted_pts = [(p[0] - min_x, p[1]) for p in new_pts]
+        
+        wrapped_piece = PatternPiece(
+            name=piece.name + "_draped_wrap",
+            points=shifted_pts,
+            grain_line=((piece.grain_line[0][0] + overlap_cm, piece.grain_line[0][1]),
+                        (piece.grain_line[1][0] + overlap_cm, piece.grain_line[1][1])),
+            labels=piece.labels + [
+                {"text": "ДРАПИРОВАННЫЙ ЗАПАХ", "x": overlap_cm * 0.5, "y": (y_min + y_max) * 0.5, "size": 0.8, "bold": True},
+                {"text": f"сборка по линии талии", "x": overlap_cm * 0.5, "y": (y_min + y_max) * 0.5 + 2.0, "size": 0.7}
+            ],
+            notches=piece.notches,
+            cut_on_fold=False,
+            quantity=2
+        )
+        wrapped_piece.notches.append((0.0, y_max))
+        wrapped_piece.notches.append((0.0, y_cascade - 5.0))
+        return _validate_and_fix_piece(wrapped_piece, piece)
+
+
+def apply_double_layer_wrap(piece: PatternPiece, overlap_cm: float) -> List[PatternPiece]:
+    """
+    Generates two wrap pieces:
+    1. Outer wrap panel (standard length).
+    2. Inner wrap panel (slightly longer/staggered by +5.0 cm cascading hem).
+    """
+    outer = apply_wrap(piece, overlap_cm)
+    outer.name = f"{piece.name}_double_outer"
+    outer.labels = outer.labels + [{"text": "ВНЕШНИЙ ЗАПАХ (ВЕРХНИЙ)", "x": overlap_cm * 0.5, "y": outer.grain_line[0][1], "size": 0.8, "bold": True}]
+    
+    inner = apply_draped_wrap(piece, overlap_cm, cascade_depth_cm=5.0)
+    inner.name = f"{piece.name}_double_inner"
+    inner.labels = inner.labels + [{"text": "ВНУТРЕННИЙ ЗАПАХ (НИЖНИЙ)", "x": overlap_cm * 0.5, "y": inner.grain_line[0][1], "size": 0.8, "bold": True}]
+    
+    outer.quantity = 1
+    inner.quantity = 1
+    
+    return [outer, inner]
+
+
+def apply_front_split(piece: PatternPiece, slit_height_cm: float = 25.0) -> PatternPiece:
+    """
+    Modifies a front panel piece to support a front center seam and a split.
+    If the piece is cut on fold, it changes it to cut_on_fold=False, quantity=2, and changes CENTER_FOLD to CENTER_SEAM.
+    It adds a notch at the split start on the center front seam (x = 0.0) at height Y = length - slit_height_cm.
+    """
+    piece.cut_on_fold = False
+    if piece.quantity == 1:
+        piece.quantity = 2
+    
+    # Change CENTER_FOLD edges to CENTER_SEAM
+    for edge in piece.edges:
+        if edge.role == EdgeRole.CENTER_FOLD:
+            edge.role = EdgeRole.CENTER_SEAM
+            
+    # Find the length (L) of the skirt
+    all_ys = [p[1] for p in piece.points]
+    y_max = max(all_ys) if all_ys else 70.0
+    y_split = y_max - slit_height_cm
+    
+    # We want to add a notch on the center front edge (x = 0.0)
+    # Let's ensure the coordinates are rounded/clean
+    notch_pt = (0.0, round(y_split, 2))
+    piece.notches = list(piece.notches)
+    if notch_pt not in piece.notches:
+        piece.notches.append(notch_pt)
+    
+    # Add a label pointing to the split
+    piece.labels = list(piece.labels)
+    piece.labels.append({
+        "text": f"РАЗРЕЗ спереди ↑{slit_height_cm:g}см",
+        "x": 2.5,
+        "y": round(y_split, 2),
+        "size": 0.7
+    })
+    
+    return _validate_and_fix_piece(piece, piece)
+
+

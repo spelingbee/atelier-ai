@@ -106,28 +106,58 @@ def _peplum(m: Measurements) -> OverlayResult:
 #  Кокетка-оверлей (yoke_overlay): облегающая панель талия→бёдра
 #  (именно такая кокетка на чёрной юбке с фото)
 # --------------------------------------------------------------------------- #
-def _yoke(m: Measurements) -> OverlayResult:
+def _yoke(m: Measurements, base_pieces: Optional[List[PatternPiece]] = None) -> OverlayResult:
     depth = m.hip_depth
     waist_eff = m.waist_cm + m.ease_waist
     
     # Generate yoke pieces dynamically from base panels using cut_yoke
-    base_front = P.StraightSkirtPattern(m).front_panel()
-    base_back = P.StraightSkirtPattern(m).back_panel()
+    base_front = None
+    base_back = None
+    if base_pieces:
+        # Search for front panel (prefer wrap or double wrap versions if present)
+        for p in base_pieces:
+            if "front_panel" in p.name or "skirt_flap" in p.name:
+                base_front = p
+                if "_wrap" in p.name or "_double" in p.name:
+                    break
+        # Search for back panel (prefer yoke remainders if present)
+        for p in base_pieces:
+            if "back_panel" in p.name:
+                base_back = p
+                if "_remainder" in p.name:
+                    break
+                    
+    if base_front is None:
+        base_front = P.StraightSkirtPattern(m).front_panel()
+    if base_back is None:
+        base_back = P.StraightSkirtPattern(m).back_panel()
+        
+    is_asym = (not base_front.cut_on_fold)
     
-    front = cut_yoke(base_front, depth)[0]
+    if is_asym:
+        front = cut_yoke(base_front, depth - 3.0, height_right_cm=depth + 3.0)[0]
+    else:
+        front = cut_yoke(base_front, depth)[0]
+        
     back = cut_yoke(base_back, depth)[0]
     
     front.name = "yoke_overlay_front"
     back.name = "yoke_overlay_back"
     
-    front.labels = [{"text": "КОКЕТКА ПЕРЕД × 1 (сгиб)", "x": m.H * 0.25, "y": depth * 0.5, "size": 1.0, "bold": True}]
+    if is_asym:
+        front.labels = [{"text": f"КОКЕТКА ПЕРЕД АСИММ. × {base_front.quantity}", "x": m.H * 0.25, "y": depth * 0.5, "size": 1.0, "bold": True}]
+        front.cut_on_fold = False
+        front.quantity = base_front.quantity
+    else:
+        front.labels = [{"text": "КОКЕТКА ПЕРЕД × 1 (сгиб)", "x": m.H * 0.25, "y": depth * 0.5, "size": 1.0, "bold": True}]
+        front.cut_on_fold = True
+        front.quantity = 1
+        
     back.labels = [{"text": "КОКЕТКА СПИНКА × 1 (сгиб)", "x": m.H * 0.25, "y": depth * 0.5, "size": 1.0, "bold": True}]
     
     front.grain_line = ((m.H * 0.25, 2), (m.H * 0.25, depth - 2))
     back.grain_line = ((m.H * 0.25, 2), (m.H * 0.25, depth - 2))
-    front.cut_on_fold = True
     back.cut_on_fold = True
-    front.quantity = 1
     back.quantity = 1
     
     steps = [
@@ -202,12 +232,17 @@ def _bow(m: Measurements) -> OverlayResult:
 _BUILDERS = {"peplum": _peplum, "yoke_overlay": _yoke, "flap": _flap, "bow": _bow}
 
 
-def build_overlay(key: str, m: Measurements) -> Optional[OverlayResult]:
+def build_overlay(key: str, m: Measurements, base_pieces: Optional[List[PatternPiece]] = None) -> Optional[OverlayResult]:
     if key in (None, "none"):
         return None
     fn = _BUILDERS.get(key)
     if not fn:
         raise ValueError(f"оверлей '{key}' не поддержан Фазой 3")
+    
+    import inspect
+    sig = inspect.signature(fn)
+    if "base_pieces" in sig.parameters:
+        return fn(m, base_pieces=base_pieces)
     return fn(m)
 
 
@@ -232,7 +267,7 @@ class LayeredAssembly:
 def assemble(selection: Dict[str, object], m: Measurements) -> LayeredAssembly:
     a = C.resolve(selection, m)
     silh = a.selection[C.SLOT_SILHOUETTE]
-    ov = build_overlay(a.selection.get(C.SLOT_OVERLAY, "none"), m)
+    ov = build_overlay(a.selection.get(C.SLOT_OVERLAY, "none"), m, base_pieces=a.pieces)
     pieces = list(a.pieces)
     layers = [{"layer": 0, "title": f"База: {C.SILHOUETTE_TITLES.get(silh, silh)}", "attach": "waist"}]
     order = list(a.sewing_spec)

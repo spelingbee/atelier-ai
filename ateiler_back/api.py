@@ -61,17 +61,21 @@ def create_session():
 
 
 @app.post("/api/v1/analyze")
-async def analyze(session_id: str = Form(...), file: UploadFile = File(...)):
+async def analyze(session_id: str = Form(...), file: UploadFile = File(...), provider: Optional[str] = Form(None)):
     if file.content_type not in {"image/jpeg", "image/png", "image/webp"}:
         raise HTTPException(400, "Только JPEG, PNG, WebP")
     content = await file.read()
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(400, "Файл > 10 МБ")
-    res = await service.analyze(session_id, content, file.filename or "upload.jpg")
+    res = await service.analyze(session_id, content, file.filename or "upload.jpg", provider=provider)
     return {
         "session_id": res.session_id, "analysis_id": res.analysis_id,
         "skirt_type": res.skirt_type, "confidence": res.confidence,
         "length_hint_cm": res.length_hint_cm, "ai_params": res.ai,
+        "fabric_recommendation": res.ai.get("fabric_recommendation"),
+        "similarity_percentage": res.ai.get("similarity_percentage"),
+        "similarity_explanation": res.ai.get("similarity_explanation"),
+        "technical_specification_notes": res.ai.get("technical_specification_notes"),
         "message": f"Тип: {res.skirt_type} (уверенность {res.confidence:.0%})",
     }
 

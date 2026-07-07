@@ -49,7 +49,7 @@ def ensure_db():
     db.init_db()
 
 
-async def analyze(session_id: str, image_bytes: bytes, filename: str) -> AnalyzeResult:
+async def analyze(session_id: str, image_bytes: bytes, filename: str, provider: Optional[str] = None) -> AnalyzeResult:
     """Сохранить изображение, вызвать классификатор, сохранить результат."""
     ext = os.path.splitext(filename)[1].lower() or ".jpg"
     image_key = f"uploads/{session_id}/{uuid.uuid4().hex}{ext}"
@@ -59,7 +59,7 @@ async def analyze(session_id: str, image_bytes: bytes, filename: str) -> Analyze
         tmp.write(image_bytes)
         tmp_path = tmp.name
     try:
-        ai = await classify_skirt_image(tmp_path)
+        ai = await classify_skirt_image(tmp_path, provider=provider)
     finally:
         os.unlink(tmp_path)
 

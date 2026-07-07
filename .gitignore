@@ -39,3 +39,4 @@ ateiler_back/comp_assembly.svg
 ateiler_back/comp_assembly.pdf
 ateiler_back/*.db-journal
 ateiler_back/storage/
+ateiler_back/out_patterns/

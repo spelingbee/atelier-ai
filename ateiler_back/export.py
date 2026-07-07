@@ -129,6 +129,110 @@ def _path_d(points: List[Point]) -> str:
     return d + " Z"
 
 
+def _smooth_svg_path(points: List[Point]) -> str:
+    if len(points) < 3:
+        return _path_d(points)
+        
+    pts = []
+    for p in points:
+        if not pts or math.dist(pts[-1], p) > 1e-5:
+            pts.append(p)
+    if len(pts) < 3:
+        return _path_d(points)
+        
+    n = len(pts)
+    sharp = [False] * n
+    for i in range(n):
+        p_prev = pts[(i - 1) % n]
+        p_curr = pts[i]
+        p_next = pts[(i + 1) % n]
+        
+        v1 = (p_curr[0] - p_prev[0], p_curr[1] - p_prev[1])
+        v2 = (p_next[0] - p_curr[0], p_next[1] - p_curr[1])
+        
+        ln1 = math.hypot(*v1)
+        ln2 = math.hypot(*v2)
+        if ln1 < 1e-5 or ln2 < 1e-5:
+            sharp[i] = True
+            continue
+            
+        cos_theta = (v1[0]*v2[0] + v1[1]*v2[1]) / (ln1 * ln2)
+        if cos_theta < 0.866:
+            sharp[i] = True
+            
+    tangents = [(0.0, 0.0)] * n
+    for i in range(n):
+        if sharp[i]:
+            tangents[i] = (0.0, 0.0)
+        else:
+            p_prev = pts[(i - 1) % n]
+            p_next = pts[(i + 1) % n]
+            tangents[i] = (0.5 * (p_next[0] - p_prev[0]), 0.5 * (p_next[1] - p_prev[1]))
+            
+    d = f"M {pts[0][0]:.3f} {pts[0][1]:.3f}"
+    for i in range(n):
+        curr = pts[i]
+        nxt = pts[(i + 1) % n]
+        t_curr = tangents[i]
+        t_nxt = tangents[(i + 1) % n]
+        
+        if (t_curr == (0.0, 0.0) and t_nxt == (0.0, 0.0)) or math.dist(curr, nxt) < 0.5:
+            d += f" L {nxt[0]:.3f} {nxt[1]:.3f}"
+        else:
+            cp1 = (curr[0] + t_curr[0] / 3, curr[1] + t_curr[1] / 3)
+            cp2 = (nxt[0] - t_nxt[0] / 3, nxt[1] - t_nxt[1] / 3)
+            d += f" C {cp1[0]:.3f} {cp1[1]:.3f}, {cp2[0]:.3f} {cp2[1]:.3f}, {nxt[0]:.3f} {nxt[1]:.3f}"
+            
+    return d + " Z"
+
+
+def _smooth_open_svg_path(points: List[Point]) -> str:
+    if len(points) < 3:
+        d = f"M {points[0][0]:.3f} {points[0][1]:.3f}"
+        for x, y in points[1:]:
+            d += f" L {x:.3f} {y:.3f}"
+        return d
+        
+    n = len(points)
+    sharp = [False] * n
+    sharp[0] = sharp[-1] = True
+    for i in range(1, n - 1):
+        p_prev = points[i - 1]
+        p_curr = points[i]
+        p_next = points[i + 1]
+        v1 = (p_curr[0] - p_prev[0], p_curr[1] - p_prev[1])
+        v2 = (p_next[0] - p_curr[0], p_next[1] - p_curr[1])
+        ln1 = math.hypot(*v1)
+        ln2 = math.hypot(*v2)
+        if ln1 < 1e-5 or ln2 < 1e-5:
+            sharp[i] = True
+            continue
+        cos_theta = (v1[0]*v2[0] + v1[1]*v2[1]) / (ln1 * ln2)
+        if cos_theta < 0.866:
+            sharp[i] = True
+            
+    tangents = [(0.0, 0.0)] * n
+    for i in range(1, n - 1):
+        if not sharp[i]:
+            p_prev = points[i - 1]
+            p_next = points[i + 1]
+            tangents[i] = (0.5 * (p_next[0] - p_prev[0]), 0.5 * (p_next[1] - p_prev[1]))
+            
+    d = f"M {points[0][0]:.3f} {points[0][1]:.3f}"
+    for i in range(n - 1):
+        curr = points[i]
+        nxt = points[i + 1]
+        t_curr = tangents[i]
+        t_nxt = tangents[i + 1]
+        if (t_curr == (0.0, 0.0) and t_nxt == (0.0, 0.0)) or math.dist(curr, nxt) < 0.5:
+            d += f" L {nxt[0]:.3f} {nxt[1]:.3f}"
+        else:
+            cp1 = (curr[0] + t_curr[0] / 3, curr[1] + t_curr[1] / 3)
+            cp2 = (nxt[0] - t_nxt[0] / 3, nxt[1] - t_nxt[1] / 3)
+            d += f" C {cp1[0]:.3f} {cp1[1]:.3f}, {cp2[0]:.3f} {cp2[1]:.3f}, {nxt[0]:.3f} {nxt[1]:.3f}"
+    return d
+
+
 def export_svg(pieces: List[PatternPiece], path: str,
                seam_cm: float = 1.5, add_seam: bool = True) -> Tuple[float, float]:
     placed, W, H = layout_pieces(pieces)
@@ -144,9 +248,16 @@ def export_svg(pieces: List[PatternPiece], path: str,
         if add_seam:
             outer = seam_outline(oriented_pts, seam_cm)
             shifted_outer = [(x + dx, y + dy) for x, y in outer]
-            parts.append(f'<path d="{_path_d(shifted_outer)}" fill="none" stroke="#999" '
+            parts.append(f'<path d="{_smooth_svg_path(shifted_outer)}" fill="none" stroke="#999" '
                          f'stroke-width="0.04" stroke-dasharray="0.4,0.3"/>')
-        parts.append(f'<path d="{_path_d(shifted)}" fill="none" stroke="#000" stroke-width="0.06"/>')
+        parts.append(f'<path d="{_smooth_svg_path(shifted)}" fill="none" stroke="#000" stroke-width="0.06"/>')
+        
+        # Render internal edges (like darts)
+        for ie in p.internal_edges:
+            ie_pts = [(x + dx, y + dy) for x, y in ie.points]
+            parts.append(f'<path d="{_smooth_open_svg_path(ie_pts)}" fill="none" stroke="#666" '
+                         f'stroke-width="0.04" stroke-dasharray="0.3,0.2"/>')
+            
         (gx1, gy1), (gx2, gy2) = p.grain_line
         parts.append(f'<line x1="{gx1+dx:.2f}" y1="{gy1+dy:.2f}" x2="{gx2+dx:.2f}" '
                      f'y2="{gy2+dy:.2f}" stroke="#333" stroke-width="0.05"/>')
@@ -170,6 +281,80 @@ def export_svg(pieces: List[PatternPiece], path: str,
 # --------------------------------------------------------------------------- #
 #  PDF export (reportlab, true mm, A4 tiling with overlap + crop marks)
 # --------------------------------------------------------------------------- #
+def _draw_smooth_poly(c, points: List[Point], close=True):
+    if len(points) < 3:
+        p = c.beginPath()
+        p.moveTo(*points[0])
+        for pt in points[1:]:
+            p.lineTo(*pt)
+        if close:
+            p.close()
+        c.drawPath(p, stroke=1, fill=0)
+        return
+        
+    pts = []
+    for pt in points:
+        if not pts or math.dist(pts[-1], pt) > 1e-5:
+            pts.append(pt)
+    if len(pts) < 3:
+        p = c.beginPath()
+        p.moveTo(*points[0])
+        for pt in points[1:]:
+            p.lineTo(*pt)
+        if close:
+            p.close()
+        c.drawPath(p, stroke=1, fill=0)
+        return
+        
+    n = len(pts)
+    sharp = [False] * n
+    if not close:
+        sharp[0] = sharp[-1] = True
+    for i in range(n):
+        if not close and (i == 0 or i == n - 1):
+            continue
+        p_prev = pts[(i - 1) % n]
+        p_curr = pts[i]
+        p_next = pts[(i + 1) % n]
+        v1 = (p_curr[0] - p_prev[0], p_curr[1] - p_prev[1])
+        v2 = (p_next[0] - p_curr[0], p_next[1] - p_curr[1])
+        ln1 = math.hypot(*v1)
+        ln2 = math.hypot(*v2)
+        if ln1 < 1e-5 or ln2 < 1e-5:
+            sharp[i] = True
+            continue
+        cos_theta = (v1[0]*v2[0] + v1[1]*v2[1]) / (ln1 * ln2)
+        if cos_theta < 0.866:
+            sharp[i] = True
+            
+    tangents = [(0.0, 0.0)] * n
+    for i in range(n):
+        if not close and (i == 0 or i == n - 1):
+            continue
+        if not sharp[i]:
+            p_prev = pts[(i - 1) % n]
+            p_next = pts[(i + 1) % n]
+            tangents[i] = (0.5 * (p_next[0] - p_prev[0]), 0.5 * (p_next[1] - p_prev[1]))
+            
+    p = c.beginPath()
+    p.moveTo(*pts[0])
+    limit = n if close else n - 1
+    for i in range(limit):
+        curr = pts[i]
+        nxt = pts[(i + 1) % n]
+        t_curr = tangents[i]
+        t_nxt = tangents[(i + 1) % n]
+        if (t_curr == (0.0, 0.0) and t_nxt == (0.0, 0.0)) or math.dist(curr, nxt) < 0.5:
+            p.lineTo(*nxt)
+        else:
+            cp1 = (curr[0] + t_curr[0] / 3, curr[1] + t_curr[1] / 3)
+            cp2 = (nxt[0] - t_nxt[0] / 3, nxt[1] - t_nxt[1] / 3)
+            p.curveTo(cp1[0], cp1[1], cp2[0], cp2[1], nxt[0], nxt[1])
+    if close:
+        p.close()
+    c.drawPath(p, stroke=1, fill=0)
+
+
 def export_pdf_tiled(pieces: List[PatternPiece], path: str,
                      seam_cm: float = 1.5, add_seam: bool = True,
                      overlap_cm: float = 1.0):
@@ -209,9 +394,18 @@ def export_pdf_tiled(pieces: List[PatternPiece], path: str,
                 shifted_outer = [((x + dx) * CM, (y + dy) * CM) for x, y in outer]
                 c.setStrokeColorRGB(0.6, 0.6, 0.6); c.setLineWidth(0.5)
                 c.setDash(3, 2)
-                _poly(c, shifted_outer); c.setDash()
+                _draw_smooth_poly(c, shifted_outer, close=True); c.setDash()
             c.setStrokeColorRGB(0, 0, 0); c.setLineWidth(1.0)
-            _poly(c, shifted)
+            _draw_smooth_poly(c, shifted, close=True)
+            
+            # Render internal edges (like darts)
+            for ie in p.internal_edges:
+                ie_pts = [((x + dx) * CM, (y + dy) * CM) for x, y in ie.points]
+                c.setStrokeColorRGB(0.4, 0.4, 0.4); c.setLineWidth(0.6)
+                c.setDash(2, 2)
+                _draw_smooth_poly(c, ie_pts, close=False)
+                c.setDash()
+
             (gx1, gy1), (gx2, gy2) = p.grain_line
             c.setLineWidth(0.6)
             c.line((gx1 + dx) * CM, (gy1 + dy) * CM, (gx2 + dx) * CM, (gy2 + dy) * CM)
@@ -231,12 +425,3 @@ def export_pdf_tiled(pieces: List[PatternPiece], path: str,
             c.showPage()
     c.save()
     return rows, cols
-
-
-def _poly(c, pts):
-    p = c.beginPath()
-    p.moveTo(*pts[0])
-    for pt in pts[1:]:
-        p.lineTo(*pt)
-    p.close()
-    c.drawPath(p, stroke=1, fill=0)

@@ -61,6 +61,8 @@ def _resolve_provider(provider: Optional[str]) -> str:
     env = os.getenv("IMAGE_PROVIDER")
     if env:
         return env.lower()
+    if os.getenv("OPENAI_API_KEY"):
+        return "openai"
     if os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"):
         return "gemini"
     return "mock"
@@ -154,6 +156,53 @@ def _gemini_multiref(prompt: str, reference_images: List[str], out_path: str) ->
     raise RuntimeError("Gemini не вернул изображение")
 
 
+def _openai_dalle(prompt: str, out_path: str) -> str:
+    import httpx
+    api_key = os.environ["OPENAI_API_KEY"]
+    model = os.getenv("OPENAI_IMAGE_MODEL", "dall-e-3")
+    url = "https://api.openai.com/v1/images/generations"
+    
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "n": 1,
+        "size": "1024x1024" if model == "dall-e-3" else "512x512"
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    with httpx.Client(timeout=120.0) as client:
+        resp = client.post(url, json=payload, headers=headers)
+        
+        # Fallback to dall-e-2 if dall-e-3 is not available on this API key
+        if resp.status_code == 400 and model == "dall-e-3":
+            try:
+                err_data = resp.json()
+                err_msg = err_data.get("error", {}).get("message", "")
+                err_code = err_data.get("error", {}).get("code", "")
+                if "does not exist" in err_msg or err_code in ("invalid_value", "model_not_found"):
+                    print("dall-e-3 model is not available for this key. Falling back to dall-e-2...")
+                    model = "dall-e-2"
+                    payload["model"] = model
+                    payload["size"] = "512x512"
+                    resp = client.post(url, json=payload, headers=headers)
+            except Exception:
+                pass
+                
+        if resp.status_code != 200:
+            raise RuntimeError(f"OpenAI API error {resp.status_code}: {resp.text}")
+            
+        data = resp.json()
+        img_url = data["data"][0]["url"]
+        # Download the image from the URL
+        img_resp = client.get(img_url)
+        img_resp.raise_for_status()
+        img_bytes = img_resp.content
+    Path(out_path).write_bytes(img_bytes)
+    return out_path
+
+
 def generate_concept(features: Dict,
                      reference_images: Optional[List[str]] = None,
                      out_path: Optional[str] = None,
@@ -163,7 +212,17 @@ def generate_concept(features: Dict,
     import tempfile
     out_path = out_path or os.path.join(tempfile.gettempdir(), f"concept_{int(time.time()*1000)}.png")
     p = _resolve_provider(provider)
-    if p == "gemini":
+    if p == "openai":
+        try:
+            path = _openai_dalle(prompt, out_path)
+            return {"path": path, "provider": "openai", "prompt": prompt}
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            path = _mock_render(prompt, reference_images, out_path)
+            return {"path": path, "provider": "openai-fallback",
+                    "prompt": prompt, "error": f"{type(e).__name__}: {e}"}
+    elif p == "gemini":
         try:
             if reference_images:
                 path = _gemini_multiref(prompt, reference_images, out_path)

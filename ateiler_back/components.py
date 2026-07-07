@@ -163,6 +163,7 @@ WAISTBAND_SPECS = {
                              note="приминает любую сборку"),
     "facing": ComponentSpec("facing", SLOT_WAISTBAND, "Обтачка",
                             note="внутренняя обтачка без пояса"),
+    "crossover": ComponentSpec("crossover", SLOT_WAISTBAND, "Асимметричный пояс с нахлестом", geometry_ready=True),
 }
 
 # --- Застёжки ------------------------------------------------------------ #
@@ -183,10 +184,14 @@ DETAIL_SPECS = {
                            note="требует облегающий силуэт"),
     "pockets": ComponentSpec("pockets", SLOT_DETAIL, "Карманы", geometry_ready=True,
                              note="подтип: inseam/patch/cargo/welt (по умолч. inseam)"),
-    "slit_detail": ComponentSpec("slit_detail", SLOT_DETAIL, "Разрез", geometry_ready=False),
+    "slit_detail": ComponentSpec("slit_detail", SLOT_DETAIL, "Разрез", geometry_ready=True),
     "pleats_detail": ComponentSpec("pleats_detail", SLOT_DETAIL, "Складки", geometry_ready=False),
     "straps": ComponentSpec("straps", SLOT_DETAIL, "Ремни и шлёвки", geometry_ready=True),
     "paperbag": ComponentSpec("paperbag", SLOT_DETAIL, "Талия Paperbag", geometry_ready=True),
+    "back_yoke": ComponentSpec("back_yoke", SLOT_DETAIL, "Кокетка спинки (джинсовая)", geometry_ready=True),
+    "pleated_insert": ComponentSpec("pleated_insert", SLOT_DETAIL, "Боковая плиссированная вставка", geometry_ready=True),
+    "draped_wrap": ComponentSpec("draped_wrap", SLOT_DETAIL, "Асимметричный драпированный запах", geometry_ready=True),
+    "double_wrap": ComponentSpec("double_wrap", SLOT_DETAIL, "Двойной каскадный запах", geometry_ready=True),
 }
 
 # --- Оверлеи (верхний крой; геометрия — Фаза 3) -------------------------- #
@@ -250,6 +255,19 @@ def build_waistband(key: str, m: Measurements) -> ComponentResult:
         edge = Edge("waist", waist_eff, easeable=False, note="обтачка по талии")
         steps = ["Притачать обтачку по верхнему срезу, отвернуть внутрь."]
         return ComponentResult(SLOT_WAISTBAND, key, spec.title, [piece], {"waist": edge}, steps)
+    if key == "crossover":
+        base_band = StraightSkirtPattern(m).waistband()
+        import geometry_modifiers as GM
+        crossover_piece = GM.apply_crossover_waistband(base_band, overlap_cm=6.0)
+        edge = Edge("waist", waist_eff, easeable=False, note="асимметричный пояс с нахлестом")
+        steps = [
+            "Притачать асимметричный пояс по верхнему срезу.",
+            "Обтачать концы пояса (прямоугольный слева и диагональный справа нахлест).",
+            "Вывернуть, приутюжить, настрочить по разметке.",
+            "Установить джинсовую пуговицу или кнопку на конце нахлеста."
+        ]
+        return ComponentResult(SLOT_WAISTBAND, "crossover", spec.title,
+                               [crossover_piece], {"waist": edge}, steps)
     # band (по умолчанию)
     piece = StraightSkirtPattern(m).waistband()
     edge = Edge("waist", waist_eff, easeable=False, note="притачной пояс по талии")
@@ -292,6 +310,10 @@ def resolve(selection: Dict[str, object], m: Measurements) -> Assembly:
     sel = dict(DEFAULTS)
     sel.update(selection or {})
     warnings: List[str] = []
+    
+    details = sel.get(SLOT_DETAIL) or sel.get("details") or []
+    if isinstance(details, str):
+        details = [details]
 
     silh = sel[SLOT_SILHOUETTE]
     if silh not in SILHOUETTE_TITLES:
@@ -303,20 +325,30 @@ def resolve(selection: Dict[str, object], m: Measurements) -> Assembly:
     silh_pieces = [p for p in raw if p.name != "waistband"]
     
     closure = sel[SLOT_CLOSURE]
-    if closure == "wrap":
+    if closure == "wrap" or "draped_wrap" in details or "double_wrap" in details:
         front_idx = -1
         for idx, p in enumerate(silh_pieces):
-            if p.name == "front_panel":
+            if p.name in ("front_panel", "skirt_flap"):
                 front_idx = idx
                 break
         if front_idx != -1:
             import geometry_modifiers as GM
             ov = m.H * 0.25  # 50% of half-hip width
-            wrapped = GM.apply_wrap(silh_pieces[front_idx], ov)
-            wrapped.name = "front_panel_wrap"
-            wrapped.quantity = 2
-            wrapped.cut_on_fold = False
-            silh_pieces[front_idx] = wrapped
+            
+            if "double_wrap" in details:
+                wrapped_pieces = GM.apply_double_layer_wrap(silh_pieces[front_idx], ov)
+                silh_pieces.pop(front_idx)
+                for p in reversed(wrapped_pieces):
+                    silh_pieces.insert(front_idx, p)
+            elif "draped_wrap" in details:
+                wrapped = GM.apply_draped_wrap(silh_pieces[front_idx], ov)
+                silh_pieces[front_idx] = wrapped
+            else:
+                wrapped = GM.apply_wrap(silh_pieces[front_idx], ov)
+                wrapped.name = "front_panel_wrap"
+                wrapped.quantity = 2
+                wrapped.cut_on_fold = False
+                silh_pieces[front_idx] = wrapped
             
             # Add belt ties (завязки/бант) as new pieces
             tie_len = m.waist_cm * 0.75 + 45.0
@@ -342,7 +374,7 @@ def resolve(selection: Dict[str, object], m: Measurements) -> Assembly:
     elif closure == "button_front":
         front_idx = -1
         for idx, p in enumerate(silh_pieces):
-            if p.name == "front_panel":
+            if p.name in ("front_panel", "skirt_flap"):
                 front_idx = idx
                 break
         if front_idx != -1:
@@ -356,9 +388,6 @@ def resolve(selection: Dict[str, object], m: Measurements) -> Assembly:
             warnings.append(f"Застежка 'button_front' не поддерживается для силуэта '{silh}' и была проигнорирована.")
 
     # --- Paperbag Waist Modifier ------------------------------------------- #
-    details = sel.get(SLOT_DETAIL) or sel.get("details") or []
-    if isinstance(details, str):
-        details = [details]
     if "paperbag" in details:
         if sel[SLOT_WAISTBAND] == "band":
             warnings.append("Талия Paperbag несовместима с притачным поясом. Пояс заменен на кулиску/резинку.")
@@ -367,6 +396,49 @@ def resolve(selection: Dict[str, object], m: Measurements) -> Assembly:
         for idx, p in enumerate(silh_pieces):
             if "panel" in p.name:
                 silh_pieces[idx] = GM.apply_paperbag(p, ruffle_h=4.0)
+
+    # --- Back Yoke Modifier ------------------------------------------------ #
+    if "back_yoke" in details:
+        back_idx = -1
+        for idx, p in enumerate(silh_pieces):
+            if p.name == "back_panel":
+                back_idx = idx
+                break
+        if back_idx != -1:
+            import geometry_modifiers as GM
+            yoke_pieces = GM.cut_back_yoke(silh_pieces[back_idx], yoke_depth_center=8.0, yoke_depth_side=4.0)
+            silh_pieces.pop(back_idx)
+            for p in reversed(yoke_pieces):
+                silh_pieces.insert(back_idx, p)
+        else:
+            warnings.append("Кокетка спинки поддерживается только для силуэтов с деталью 'back_panel'.")
+
+    # --- Front Split / Slit Modifier --------------------------------------- #
+    if closure == "slit" or "slit_detail" in details:
+        front_idx = -1
+        for idx, p in enumerate(silh_pieces):
+            if p.name == "front_panel":
+                front_idx = idx
+                break
+        if front_idx != -1:
+            import geometry_modifiers as GM
+            silh_pieces[front_idx] = GM.apply_front_split(silh_pieces[front_idx], slit_height_cm=25.0)
+
+    # --- Pleated Insert Modifier (Model 3) ---------------------------------- #
+    if "pleated_insert" in details:
+        front_idx = -1
+        for idx, p in enumerate(silh_pieces):
+            if p.name in ("front_panel", "skirt_flap"):
+                front_idx = idx
+                break
+        if front_idx != -1:
+            import geometry_modifiers as GM
+            wedge_pieces = GM.split_and_insert_wedge(silh_pieces[front_idx], split_x_ratio=0.6, pleated=True)
+            silh_pieces.pop(front_idx)
+            for p in reversed(wedge_pieces):
+                silh_pieces.insert(front_idx, p)
+        else:
+            warnings.append("Боковая вставка поддерживается только для силуэтов с деталью 'front_panel'.")
 
     waist_edge = silhouette_waist_edge(silh, silh_pieces, m)
     components: Dict[str, ComponentResult] = {
@@ -462,6 +534,26 @@ def resolve(selection: Dict[str, object], m: Measurements) -> Assembly:
             detail_steps.append("  • Заутюжить верхний срез на 1.0 см на изнанку.")
             detail_steps.append("  • Проложить параллельные строчки на расстоянии 4.0 см от верха, формируя кулиску.")
             detail_steps.append("  • Вдеть эластичную ленту (резинку) в кулиску, закрепить концы.")
+        elif d == "back_yoke":
+            detail_steps.append("Кокетка спинки:")
+            detail_steps.append("  • Стачать детали кокетки спинки с основными деталями спинки (закрытый шов).")
+            detail_steps.append("  • Проложить двойную джинсовую отстрочку по шву притачивания.")
+        elif d == "pleated_insert":
+            detail_steps.append("Боковая плиссированная вставка:")
+            detail_steps.append("  • Притачать левую и правую части переднего полотнища к плиссированному клину-годе.")
+            detail_steps.append("  • Заутюжить припуски швов в сторону от плиссе.")
+        elif d == "slit_detail":
+            detail_steps.append("Разрез:")
+            detail_steps.append("  • Стачать передний шов от талии до надсечки, оставив низ открытым под разрез.")
+            detail_steps.append("  • Обработать припуски разреза вподгибку или обтачкой.")
+        elif d == "draped_wrap":
+            detail_steps.append("Асимметричный драпированный запах:")
+            detail_steps.append("  • Заложить мягкие складки по линии талии на запахе по разметке.")
+            detail_steps.append("  • Обработать косой срез каскадного подола швом вподгибку.")
+        elif d == "double_wrap":
+            detail_steps.append("Двойной каскадный запах:")
+            detail_steps.append("  • Наложить внешний запах на внутренний запах, совместив верхние срезы.")
+            detail_steps.append("  • Сметать слои по талии и обрабатывать далее как единую деталь.")
         elif not spec.geometry_ready:
             warnings.append(f"Деталь «{spec.title}» пока вносится только в ТЗ (геометрия — позже).")
             detail_steps.append(f"Деталь: {spec.title}.")

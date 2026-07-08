@@ -7,7 +7,6 @@ AtelierAI — РАСШИРЕНИЕ API (NEW FILE, аддитивно). Не ре
   POST /api/v2/concept        — ИИ-концепт-картинка по фото + признакам
   GET  /api/v2/skirt-types    — список всех типов (вкл. новые)
 """
-from __future__ import annotations
 
 import os
 import tempfile

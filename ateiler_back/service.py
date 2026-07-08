@@ -91,12 +91,18 @@ def generate(session_id: str, waist_cm: float, hip_cm: float, length_cm: float,
     import overlays
     import reconcile
     
+    details = []
+    if pocket_type and pocket_type != "none":
+        details.append(f"pockets:{pocket_type}")
+        if pocket_type == "jeans":
+            details.extend(["back_yoke", "straps"])
+            
     selection = {
         "silhouette": skirt_type,
         "waistband": waistband or "band",
         "closure": closure or "zip_side",
         "overlay": overlay or "none",
-        "detail": [f"pockets:{pocket_type}"] if pocket_type and pocket_type != "none" else []
+        "detail": details
     }
     la = overlays.assemble(selection, m)
     pieces = la.pieces

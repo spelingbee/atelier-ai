@@ -111,7 +111,10 @@ def _sanitize(result: Dict) -> Dict:
     result.setdefault("has_wrap", False)
     result.setdefault("has_pockets", False)
     result.setdefault("silhouette_notes", "")
-    result["confidence"] = float(result.get("confidence", 0.5))
+    conf = float(result.get("confidence", 0.5))
+    if conf > 1.0:
+        conf = conf / 100.0
+    result["confidence"] = conf
     result["length_hint_cm"] = LENGTH_HINT_CM.get(result["estimated_length"], 60)
     
     # New fields defaults

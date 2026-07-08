@@ -1097,6 +1097,7 @@ section:first-child {
               <label for="waistbandSel">Пояс</label>
               <select id="waistbandSel" style="width:100%">
                 <option value="band">Притачной пояс</option>
+                <option value="crossover">Асимметричный пояс с нахлестом</option>
                 <option value="elastic">Кулиса/резинка</option>
                 <option value="facing">Обтачка</option>
               </select>
@@ -1108,6 +1109,7 @@ section:first-child {
                 <option value="zip_back">Молния сзади</option>
                 <option value="slit">Шлица/разрез</option>
                 <option value="wrap">Запах</option>
+                <option value="button_front">Сквозная планка на пуговицах</option>
                 <option value="none">Без застежки</option>
               </select>
             </div>
@@ -1129,6 +1131,7 @@ section:first-child {
                 <option value="none">Без карманов</option>
                 <option value="inseam">В боковом шве (мешковина)</option>
                 <option value="patch">Накладной карман</option>
+                <option value="jeans">Джинсовый карман</option>
                 <option value="cargo">Карман-карго (объемный с клапаном)</option>
                 <option value="welt">Прорезной карман (в рамку)</option>
               </select>
@@ -1308,16 +1311,27 @@ $('#btnAnalyze').addEventListener('click', async () => {
     // Автоматический выбор деталей на основе ИИ-анализа
     if (d.ai_params) {
       const p = d.ai_params;
+      const notes = ((p.silhouette_notes || '') + ' ' + (d.similarity_explanation || '')).toLowerCase();
+      const fabric = (d.fabric_recommendation || '').toLowerCase();
+      
       // Пояс
       if (p.has_waistband === false) {
         $('#waistbandSel').value = 'facing';
       } else {
-        $('#waistbandSel').value = 'band';
+        if (notes.includes('crossover') || notes.includes('перекрест') || notes.includes('асимметр')) {
+          $('#waistbandSel').value = 'crossover';
+        } else {
+          $('#waistbandSel').value = 'band';
+        }
       }
       
       // Застежка
       if (p.has_wrap) {
         $('#closureSel').value = 'wrap';
+      } else if (notes.includes('пуговиц') || notes.includes('планк') || notes.includes('button_front') || notes.includes('placket')) {
+        $('#closureSel').value = 'button_front';
+      } else if (notes.includes('разрез') || notes.includes('slit') || notes.includes('split')) {
+        $('#closureSel').value = 'slit';
       } else if (d.skirt_type === 'full_circle' || d.skirt_type === 'half_circle') {
         $('#closureSel').value = 'zip_back';
       } else {
@@ -1336,7 +1350,9 @@ $('#btnAnalyze').addEventListener('click', async () => {
 
       // Карманы
       if (p.has_pockets) {
-        if (d.skirt_type === 'bubble' || d.skirt_type === 'skort') {
+        if (fabric.includes('деним') || fabric.includes('denim') || notes.includes('джинс')) {
+          $('#pocketSel').value = 'jeans';
+        } else if (d.skirt_type === 'bubble' || d.skirt_type === 'skort') {
           $('#pocketSel').value = 'cargo';
         } else {
           $('#pocketSel').value = 'patch';

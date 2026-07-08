@@ -7,13 +7,10 @@ AtelierAI — REMIX API (NEW FILE, аддитивно). Не редактиру�
   POST /api/v1/remix          — мерки + признаки референсов → рецепт + SVG
   GET  /api/v1/remix/types    — что умеет remix (силуэты + детали)
 """
-from __future__ import annotations
-
 import os
 import tempfile
 import uuid
 from dataclasses import asdict
-from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -39,9 +36,9 @@ class MeasIn(BaseModel):
 class RemixIn(BaseModel):
     measurements: MeasIn
     # каждый элемент — вывод классификатора или ручной dict признаков
-    features: List[Dict]
+    features: list[dict]
     # какой референс (индекс) даёт какой признак: {silhouette, length, details}
-    selection: Optional[Dict[str, int]] = None
+    selection: dict[str, int] | None = None
 
 
 @router.get("/api/v1/remix/types")

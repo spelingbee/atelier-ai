@@ -7,7 +7,6 @@ AtelierAI — FastAPI app (NEW FILE, additive). Тонкая обёртка на
     ANTHROPIC_API_KEY   — если нет, классификатор работает в mock-режиме
     STORAGE_BACKEND     — local|s3 (дефолт local)
 """
-from __future__ import annotations
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -61,7 +60,7 @@ def create_session():
 
 
 @app.post("/api/v1/analyze")
-async def analyze(session_id: str = Form(...), file: UploadFile = File(...), provider: Optional[str] = Form(None)):
+async def analyze(session_id: str = Form(...), file: UploadFile = File(...), provider: str | None = Form(None)):
     if file.content_type not in {"image/jpeg", "image/png", "image/webp"}:
         raise HTTPException(400, "Только JPEG, PNG, WebP")
     content = await file.read()

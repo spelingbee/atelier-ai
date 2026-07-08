@@ -11,7 +11,7 @@ AtelierAI — РАСШИРЕНИЕ API (NEW FILE, аддитивно). Не ре
 import os
 import tempfile
 import uuid
-from typing import List, Optional
+
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import FileResponse
@@ -49,7 +49,7 @@ def skirt_types():
 
 @router.post("/api/v2/analyze")
 async def analyze_v2(file: UploadFile = File(...),
-                     provider: Optional[str] = Form(None)):
+                     provider: str | None = Form(None)):
     """provider: anthropic | gemini | mock | (пусто = авто по ENV/ключам)."""
     path = await _save_tmp(file)
     try:
@@ -70,10 +70,10 @@ async def analyze_both(file: UploadFile = File(...)):
 
 
 @router.post("/api/v2/concept")
-async def concept_v2(files: List[UploadFile] = File(...),
+async def concept_v2(files: list[UploadFile] = File(...),
                      skirt_type: str = Form("a_line"),
                      estimated_length: str = Form("midi"),
-                     provider: Optional[str] = Form(None)):
+                     provider: str | None = Form(None)):
     """Концепт-картинка по 1-3 фото + признакам. Возвращает PNG."""
     paths = [await _save_tmp(f) for f in files[:3]]
     try:
